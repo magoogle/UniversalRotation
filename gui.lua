@@ -1,5 +1,5 @@
 local plugin_label   = 'magoogles_universal_rotation'
-local plugin_version = '1.0.0'
+local plugin_version = '1.0.1'
 console.print('Lua Plugin - Magoogles Universal Rotation - v' .. plugin_version)
 
 local gui = {}
@@ -103,7 +103,7 @@ gui.render = function(spell_config, equipped_ids, all_known_ids)
                 local name = _pretty_spell_name(get_name_for_spell(spell_id)) or ('Spell ' .. spell_id)
                 local spell_tree = _get_spell_tree(spell_id)
                 if spell_tree:push(name) then
-                    spell_config.render(spell_id, name)
+                    spell_config.render(spell_id, name, equipped_ids, all_known_ids)
                     spell_tree:pop()
                 end
             end
@@ -122,7 +122,7 @@ gui.render = function(spell_config, equipped_ids, all_known_ids)
                     local name = _pretty_spell_name(get_name_for_spell(spell_id)) or ('Spell ' .. spell_id)
                     local spell_tree = _get_spell_tree(spell_id)
                     if spell_tree:push(name) then
-                        spell_config.render(spell_id, name)
+                        spell_config.render(spell_id, name, equipped_ids, all_known_ids)
                         spell_tree:pop()
                     end
                 end

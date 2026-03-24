@@ -47,7 +47,7 @@ function buff_provider.get_player_buff_choices()
     for i, it in ipairs(tmp) do
         items[#items + 1] = it.name
         hashes[#hashes + 1] = it.hash
-        index_by_hash[it.hash] = i -- because i=1 corresponds to items index 2, but combo index is 0-based:
+        index_by_hash[it.hash] = i
     end
 
     return items, hashes, index_by_hash

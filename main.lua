@@ -254,6 +254,12 @@ local function render_overlay()
     line(string.format('%d spells equipped', #equipped_ids), color_white(180))
 
     local shown = 0
+    local now_t = get_time_since_inject()
+
+    -- Chain boost tracking (mirror rotation_engine's internal table isn't exposed,
+    -- so we read from spell_config chain fields to show a UI hint only)
+    local TARGET_MODE_SHORT = { [0]='PRI', [1]='NEAR', [2]='LHP', [3]='HHP', [4]='CLV' }
+
     local spell_list = {}
     for _, spell_id in ipairs(equipped_ids) do
         if spell_id > 1 then
@@ -266,20 +272,41 @@ local function render_overlay()
     table.sort(spell_list, function(a, b) return a.cfg.priority < b.cfg.priority end)
 
     for _, entry in ipairs(spell_list) do
-        if shown >= 6 then break end
+        if shown >= 8 then break end
         shown = shown + 1
         local id   = entry.id
+        local cfg  = entry.cfg
         local name = _pretty_spell_name(get_name_for_spell(id)) or tostring(id)
         local ready = utility.is_spell_ready(id) and utility.is_spell_affordable(id)
-        local on_cd = not spell_tracker.is_off_cooldown(id, entry.cfg.cooldown, entry.cfg.charges)
+        local on_cd = not spell_tracker.is_off_cooldown(id, cfg.cooldown, cfg.charges)
 
-        local charges_left, charges_max = spell_tracker.get_charges(id, entry.cfg.charges)
+        local charges_left, charges_max = spell_tracker.get_charges(id, cfg.charges)
         local charge_txt = ''
         if charges_max and charges_max > 1 then
             charge_txt = string.format(' %d/%d', charges_left, charges_max)
         end
 
-        local label = string.format('[%d] %s%s', entry.cfg.priority, name:sub(1, 18), charge_txt)
+        -- Annotate target mode if non-default
+        local mode_txt = ''
+        if not cfg.self_cast then
+            local m = cfg.target_mode or 0
+            if m ~= 0 then
+                mode_txt = ' [' .. (TARGET_MODE_SHORT[m] or '?') .. ']'
+            end
+        else
+            mode_txt = ' [SELF]'
+        end
+
+        -- Resource condition hint
+        local res_txt = ''
+        if cfg.use_resource then
+            local sym = (cfg.resource_mode == 0) and '<' or '>='
+            res_txt = string.format(' res%s%d%%', sym, cfg.resource_pct or 50)
+        end
+
+        local label = string.format('[%d] %s%s%s%s',
+            cfg.priority, name:sub(1, 14), charge_txt, mode_txt, res_txt)
+
         local col
         if not ready then
             col = color_red(200)

@@ -1,5 +1,11 @@
 local target_selector = {}
 
+target_selector.MODE_PRIORITY  = 0
+target_selector.MODE_CLOSEST   = 1
+target_selector.MODE_LOWEST_HP = 2
+target_selector.MODE_HIGHEST_HP = 3
+target_selector.MODE_CLEAVE    = 4
+
 local SCAN_RANGE = 16.0
 
 local function _try(fn, ...)
@@ -59,6 +65,27 @@ end
 local function _is_boss(obj)     return obj.is_boss and _truthy(function() return obj:is_boss() end) end
 local function _is_elite(obj)    return obj.is_elite and _truthy(function() return obj:is_elite() end) end
 local function _is_champion(obj) return obj.is_champion and _truthy(function() return obj:is_champion() end) end
+
+local function _get_current_hp(obj)
+    if type(obj.get_current_health) == 'function' then
+        local v = _try(function() return obj:get_current_health() end)
+        if type(v) == 'number' then return v end
+    end
+    return math.huge
+end
+
+-- Count how many enemies in `all_enemies` are within `radius` of `center_pos`
+local function _count_nearby(all_enemies, center_pos, radius)
+    local r2 = radius * radius
+    local c = 0
+    for _, e in ipairs(all_enemies) do
+        local ep = _pos(e)
+        if ep and _dist2(ep, center_pos) <= r2 then
+            c = c + 1
+        end
+    end
+    return c
+end
 
 function target_selector.get_targets(player_pos, range)
     range = range or SCAN_RANGE
@@ -140,6 +167,17 @@ function target_selector.pick_target(targets, spell_cfg, player_pos, range)
         return _dist2(epos, player_pos) <= r2
     end
 
+    -- Build a filtered list of in-range enemies
+    local function build_in_range()
+        local out = {}
+        for _, e in ipairs(targets.all_enemies or {}) do
+            if e and in_range(e) then
+                out[#out + 1] = e
+            end
+        end
+        return out
+    end
+
     local function best_of(candidates)
         if not (candidates and player_pos and r2) then
             for _, e in ipairs(candidates or {}) do
@@ -159,45 +197,118 @@ function target_selector.pick_target(targets, spell_cfg, player_pos, range)
         return best
     end
 
+    -- Determine targeting mode; default 0 = priority
+    local mode = (spell_cfg and tonumber(spell_cfg.target_mode)) or target_selector.MODE_PRIORITY
+
+    -- Boss-only / elite-only filters override the mode selection
     if spell_cfg and spell_cfg.boss_only then
+        -- Always priority-pick a boss regardless of mode
         if targets.closest_boss and in_range(targets.closest_boss) then return targets.closest_boss end
-    elseif spell_cfg and spell_cfg.elite_only then
+        local bosses = {}
+        for _, e in ipairs(targets.all_enemies or {}) do
+            if e and in_range(e) and _is_boss(e) then bosses[#bosses+1] = e end
+        end
+        return best_of(bosses)
+    end
+
+    if spell_cfg and spell_cfg.elite_only then
         if targets.closest_boss and in_range(targets.closest_boss) then return targets.closest_boss end
         if targets.closest_elite and in_range(targets.closest_elite) then return targets.closest_elite end
         if targets.closest_champ and in_range(targets.closest_champ) then return targets.closest_champ end
-    else
+        local hi = {}
+        for _, e in ipairs(targets.all_enemies or {}) do
+            if e and in_range(e) and (_is_boss(e) or _is_elite(e) or _is_champion(e)) then hi[#hi+1] = e end
+        end
+        return best_of(hi)
+    end
+
+    -- ----------------------------------------------------------------
+    -- MODE: Priority (boss > elite > champion > closest)
+    -- ----------------------------------------------------------------
+    if mode == target_selector.MODE_PRIORITY then
         if targets.closest_boss and in_range(targets.closest_boss) then return targets.closest_boss end
         if targets.closest_elite and in_range(targets.closest_elite) then return targets.closest_elite end
         if targets.closest_champ and in_range(targets.closest_champ) then return targets.closest_champ end
         if targets.closest and in_range(targets.closest) then return targets.closest end
-    end
 
-    if not targets.all_enemies then return nil end
-
-    local bosses, elites, champs, any = {}, {}, {}, {}
-    for _, e in ipairs(targets.all_enemies) do
-        if in_range(e) then
-            any[#any + 1] = e
-            if _is_boss(e) then bosses[#bosses + 1] = e
-            elseif _is_elite(e) then elites[#elites + 1] = e
-            elseif _is_champion(e) then champs[#champs + 1] = e
+        local in_r = build_in_range()
+        if #in_r == 0 then return nil end
+        local bosses, elites, champs = {}, {}, {}
+        for _, e in ipairs(in_r) do
+            if _is_boss(e) then bosses[#bosses+1] = e
+            elseif _is_elite(e) then elites[#elites+1] = e
+            elseif _is_champion(e) then champs[#champs+1] = e
             end
         end
-    end
-
-    if spell_cfg and spell_cfg.boss_only then
-        return best_of(bosses)
-    end
-    if spell_cfg and spell_cfg.elite_only then
         local b = best_of(bosses); if b then return b end
-        local e = best_of(elites); if e then return e end
-        return best_of(champs)
+        local el = best_of(elites); if el then return el end
+        local c = best_of(champs); if c then return c end
+        return best_of(in_r)
     end
 
-    local b = best_of(bosses); if b then return b end
-    local e = best_of(elites); if e then return e end
-    local c = best_of(champs); if c then return c end
-    return best_of(any)
+    -- ----------------------------------------------------------------
+    -- MODE: Closest
+    -- ----------------------------------------------------------------
+    if mode == target_selector.MODE_CLOSEST then
+        if targets.closest and in_range(targets.closest) then return targets.closest end
+        return best_of(build_in_range())
+    end
+
+    -- ----------------------------------------------------------------
+    -- MODE: Lowest HP (execute)
+    -- ----------------------------------------------------------------
+    if mode == target_selector.MODE_LOWEST_HP then
+        local in_r = build_in_range()
+        local best, best_hp = nil, math.huge
+        for _, e in ipairs(in_r) do
+            local hp = _get_current_hp(e)
+            if hp < best_hp then
+                best_hp = hp
+                best = e
+            end
+        end
+        return best
+    end
+
+    -- ----------------------------------------------------------------
+    -- MODE: Highest HP
+    -- ----------------------------------------------------------------
+    if mode == target_selector.MODE_HIGHEST_HP then
+        local in_r = build_in_range()
+        local best, best_hp = nil, -math.huge
+        for _, e in ipairs(in_r) do
+            local hp = _get_current_hp(e)
+            if hp > best_hp then
+                best_hp = hp
+                best = e
+            end
+        end
+        return best
+    end
+
+    -- ----------------------------------------------------------------
+    -- MODE: Cleave Center (most enemies within aoe_range of target)
+    -- ----------------------------------------------------------------
+    if mode == target_selector.MODE_CLEAVE then
+        local in_r = build_in_range()
+        local aoe_r = (spell_cfg and spell_cfg.aoe_range) or 6.0
+        local best, best_count = nil, -1
+        for _, e in ipairs(in_r) do
+            local ep = _pos(e)
+            if ep then
+                local cnt = _count_nearby(targets.all_enemies, ep, aoe_r)
+                if cnt > best_count then
+                    best_count = cnt
+                    best = e
+                end
+            end
+        end
+        return best
+    end
+
+    -- Fallback to closest
+    if targets.closest and in_range(targets.closest) then return targets.closest end
+    return best_of(build_in_range())
 end
 
 function target_selector.count_near(targets, pos, radius)

@@ -10,6 +10,8 @@ local _gcd_until     = 0.0
 local _scan_range    = 16.0
 local _move_until    = 0.0
 
+local _chain_boosts = {}   -- keyed by target spell_id (number)
+
 local function _player_has_buff(required_hash, min_stacks)
     if not required_hash or required_hash == 0 then return true end
     min_stacks = min_stacks or 1
@@ -47,6 +49,76 @@ local function _player_has_buff(required_hash, min_stacks)
     return false
 end
 
+-- Returns current resource as a percentage (0-100), or nil if unavailable / unreliable
+local function _get_resource_pct()
+    local lp = get_local_player()
+    if not lp then return nil end
+
+    local cur, max_r
+    if type(lp.get_primary_resource_current) == 'function' then
+        local ok, v = pcall(lp.get_primary_resource_current, lp)
+        if ok and type(v) == 'number' then cur = v end
+    end
+    if type(lp.get_primary_resource_max) == 'function' then
+        local ok, v = pcall(lp.get_primary_resource_max, lp)
+        if ok and type(v) == 'number' then max_r = v end
+    end
+
+    -- If either is 0 / nil, we can't compute a reliable percentage — skip gracefully
+    if not cur or not max_r or max_r <= 0 then return nil end
+    if cur <= 0 then return nil end  -- Rogue energy / unreported resource
+
+    return (cur / max_r) * 100.0
+end
+
+local function _check_resource_condition(cfg)
+    if not cfg.use_resource then return true end
+
+    local pct = _get_resource_pct()
+    if pct == nil then return true end  -- API returned 0 / unreliable, skip check gracefully
+
+    local threshold = tonumber(cfg.resource_pct) or 50
+    local mode = tonumber(cfg.resource_mode) or 1  -- 0=Below, 1=Above
+
+    if mode == 0 then
+        -- Below %: cast when pct < threshold
+        return pct < threshold
+    else
+        -- Above %: cast when pct >= threshold
+        return pct >= threshold
+    end
+end
+
+-- Apply a chain boost after casting spell_id
+local function _apply_chain(cfg)
+    if not cfg.use_chain then return end
+    local target_id = tonumber(cfg.chain_target_id) or 0
+    if target_id == 0 then return end
+
+    local boost    = tonumber(cfg.chain_boost) or 3
+    local duration = tonumber(cfg.chain_duration) or 3.0
+    local expires  = get_time_since_inject() + duration
+
+    local existing = _chain_boosts[target_id]
+    if not existing or existing.expires < get_time_since_inject() or boost > (existing.boost or 0) then
+        _chain_boosts[target_id] = { boost = boost, expires = expires }
+    end
+end
+
+-- Get the effective priority of a spell (accounting for active chain boosts)
+local function _effective_priority(spell_id, base_priority)
+    local now = get_time_since_inject()
+    local cb = _chain_boosts[spell_id]
+    if cb and cb.expires > now then
+        -- Boost = reduce the priority number so it fires earlier
+        -- Clamp to at least 1 so it never goes negative
+        local boosted = base_priority - cb.boost
+        if boosted < 1 then boosted = 1 end
+        return boosted
+    end
+    return base_priority
+end
+
 local function can_act()
     local lp = get_local_player()
     if not lp then return false end
@@ -69,11 +141,20 @@ local function can_act()
     return true
 end
 
-local function try_cast(spell_id, target, player_pos, anim_delay)
+local function try_cast(spell_id, target, player_pos, anim_delay, self_cast)
     anim_delay = anim_delay or 0.05
 
     if not utility.is_spell_ready(spell_id) then return false end
     if not utility.is_spell_affordable(spell_id) then return false end
+
+    -- Self-cast: cast on player's position, no target needed
+    if self_cast then
+        local ok = cast_spell.self(spell_id, anim_delay)
+        if ok then return true end
+        -- Fallback: cast at player's own position
+        ok = cast_spell.position(spell_id, player_pos, anim_delay)
+        return ok or false
+    end
 
     local target_pos = target and target:get_position() or player_pos
 
@@ -123,7 +204,6 @@ function rotation_engine.tick(equipped_ids, settings)
     local range      = settings.scan_range or _scan_range
 
     local targets = target_selector.get_targets(player_pos, range)
-    if not targets.is_valid or (targets.enemy_count or 0) <= 0 then return false end
 
     local spell_list = {}
     for _, spell_id in ipairs(equipped_ids) do
@@ -131,22 +211,31 @@ function rotation_engine.tick(equipped_ids, settings)
             local cfg = spell_config.get(spell_id)
             if cfg.enabled then
                 local name = get_name_for_spell(spell_id) or tostring(spell_id)
+                local eff_pri = _effective_priority(spell_id, cfg.priority)
                 table.insert(spell_list, {
                     spell_id = spell_id,
                     cfg      = cfg,
                     name     = name,
+                    eff_pri  = eff_pri,
                 })
             end
         end
     end
 
     table.sort(spell_list, function(a, b)
-        return a.cfg.priority < b.cfg.priority
+        return a.eff_pri < b.eff_pri
     end)
 
     for _, entry in ipairs(spell_list) do
         local spell_id = entry.spell_id
         local cfg      = entry.cfg
+
+        -- Self-cast spells don't need enemies present
+        if not cfg.self_cast then
+            if not targets.is_valid or (targets.enemy_count or 0) <= 0 then
+                goto next_spell
+            end
+        end
 
         if not spell_tracker.is_off_cooldown(spell_id, cfg.cooldown, cfg.charges) then
             goto next_spell
@@ -155,10 +244,15 @@ function rotation_engine.tick(equipped_ids, settings)
         if not utility.is_spell_ready(spell_id) then goto next_spell end
         if not utility.is_spell_affordable(spell_id) then goto next_spell end
 
-        if cfg.boss_only and not targets.has_boss then goto next_spell end
-        if cfg.elite_only and not targets.has_elite
-            and not targets.has_boss and not targets.has_champion
-        then goto next_spell end
+        -- Resource condition check
+        if not _check_resource_condition(cfg) then goto next_spell end
+
+        if not cfg.self_cast then
+            if cfg.boss_only and not targets.has_boss then goto next_spell end
+            if cfg.elite_only and not targets.has_elite
+                and not targets.has_boss and not targets.has_champion
+            then goto next_spell end
+        end
 
         if cfg.require_buff then
             if not _player_has_buff(cfg.buff_hash, cfg.buff_stacks) then
@@ -166,32 +260,54 @@ function rotation_engine.tick(equipped_ids, settings)
             end
         end
 
-        local spell_range = cfg.range or range
+        -- Min enemies check (always uses player position radius, even for self-casts it's valid)
         local aoe_check = cfg.aoe_range or 6.0
-
         if cfg.min_enemies > 0 then
             local nearby = target_selector.count_near(targets, player_pos, aoe_check)
             if nearby < cfg.min_enemies then goto next_spell end
         end
 
-        local target = target_selector.pick_target(targets, cfg, player_pos, spell_range)
-        if not target then
-            local stype = cfg.spell_type or 0 -- 0=Auto,1=Melee,2=Ranged
-            local is_melee = (stype == 1) or (stype == 0 and (spell_range or 0) <= 6.0)
-            if is_melee and targets.closest then
-                try_move_towards(targets.closest, player_pos, spell_range)
+        -- For self-cast, skip target selection entirely
+        if cfg.self_cast then
+            if try_cast(spell_id, nil, player_pos, settings.anim_delay or 0.05, true) then
+                spell_tracker.record_cast(spell_id, cfg.charges)
+                _apply_chain(cfg)
+                _gcd_until = get_time_since_inject() + GLOBAL_GCD
+                if settings.debug then
+                    console.print(string.format('[UniversalRota] Self-Cast: %s (id=%d pri=%d eff=%d)',
+                        entry.name, spell_id, cfg.priority, entry.eff_pri))
+                end
+                return true
             end
             goto next_spell
         end
 
-        if try_cast(spell_id, target, player_pos, settings.anim_delay or 0.05) then
-            spell_tracker.record_cast(spell_id, cfg.charges)
-            _gcd_until = get_time_since_inject() + GLOBAL_GCD
-            if settings.debug then
-                console.print(string.format('[UniversalRota] Cast: %s (id=%d pri=%d)',
-                    entry.name, spell_id, cfg.priority))
+        -- Normal targeted cast
+        do
+            local spell_range = cfg.range or range
+            local target = target_selector.pick_target(targets, cfg, player_pos, spell_range)
+
+            if not target then
+                local stype = cfg.spell_type or 0
+                local is_melee = (stype == 1) or (stype == 0 and (spell_range or 0) <= 6.0)
+                if is_melee and targets.closest then
+                    try_move_towards(targets.closest, player_pos, spell_range)
+                end
+                goto next_spell
             end
-            return true
+
+            if try_cast(spell_id, target, player_pos, settings.anim_delay or 0.05, false) then
+                spell_tracker.record_cast(spell_id, cfg.charges)
+                _apply_chain(cfg)
+                _gcd_until = get_time_since_inject() + GLOBAL_GCD
+                if settings.debug then
+                    local mode_names = { [0]='Priority', [1]='Closest', [2]='LowestHP', [3]='HighestHP', [4]='Cleave' }
+                    console.print(string.format('[UniversalRota] Cast: %s (id=%d pri=%d eff=%d mode=%s)',
+                        entry.name, spell_id, cfg.priority, entry.eff_pri,
+                        mode_names[cfg.target_mode or 0] or '?'))
+                end
+                return true
+            end
         end
 
         ::next_spell::
