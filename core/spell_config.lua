@@ -260,7 +260,7 @@ function spell_config.render(spell_id, display_name, equipped_ids, all_known_ids
             end
         end
 
-        e.buff_combo:render('Buff', items, 'Buff must be active on you to allow the spell (missing entry shows saved selection)')
+        e.buff_combo:render('Buff', items, 'Buff must be active on you to cast. Previously seen buffs are retained even when inactive.')
 
         local sel = e.buff_combo:get()
         if type(sel) ~= 'number' then sel = 0 end
@@ -270,7 +270,10 @@ function spell_config.render(spell_id, display_name, equipped_ids, all_known_ids
 
         if sel_hash ~= 0 then
             local label = items[sel + 1] or ''
-            label = tostring(label):gsub('%s*%(missing%)%s*$', '')
+            -- Strip status tags to store the clean name
+            label = tostring(label)
+                :gsub('%s*%(Not Active%)%s*$', '')
+                :gsub('%s*%(missing%)%s*$', '')
             _buff_name_cache[tostring(spell_id)] = label
             st.buff_name = label
         end

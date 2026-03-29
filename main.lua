@@ -124,7 +124,7 @@ end
 
 local function _export_profile(class_key)
     local data = {
-        version = 1,
+        version = 2,
         class   = class_key or _class_key(),
         global  = {
             scan_range      = gui.elements.scan_range:get(),
@@ -135,6 +135,7 @@ local function _export_profile(class_key)
             overlay_y       = gui.elements.overlay_y:get(),
         },
         spells = {},
+        buff_history = buff_provider.export_history(),
     }
 
     for _, sid in ipairs(all_known_ids) do
@@ -182,6 +183,11 @@ local function _import_profile(class_key, silent)
         _set_element(gui.elements.overlay_y,       data.global.overlay_y)
     end
 
+    -- Restore buff history so previously seen buffs appear in dropdowns
+    if type(data.buff_history) == 'table' then
+        buff_provider.import_history(data.buff_history)
+    end
+
     if type(data.spells) == 'table' then
         for sid_str, cfg in pairs(data.spells) do
             local sid = tonumber(sid_str)
@@ -225,6 +231,8 @@ local function handle_class_profiles()
         all_known_ids = {}
         all_known_set = {}
         last_scan     = -999
+
+        buff_provider.clear_history()
 
         last_class_key = ck
         _import_profile(ck, true)
