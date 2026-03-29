@@ -143,6 +143,30 @@ local function can_act()
     return true
 end
 
+-- Evade-style cast: press a key instead of using cast_spell API
+local function try_evade_cast(spell_id, vk_code)
+    if not utility.is_spell_ready(spell_id) then return false end
+    if not utility.is_spell_affordable(spell_id) then return false end
+
+    vk_code = vk_code or 0x20  -- default: spacebar
+    utility.send_key_press(vk_code)
+    return true
+end
+
+-- Cursor-targeted cast: cast at the current mouse cursor world position
+local function try_cursor_cast(spell_id, anim_delay)
+    anim_delay = anim_delay or 0.05
+
+    if not utility.is_spell_ready(spell_id) then return false end
+    if not utility.is_spell_affordable(spell_id) then return false end
+
+    local cursor_pos = get_cursor_position()
+    if not cursor_pos then return false end
+
+    local ok = cast_spell.position(spell_id, cursor_pos, anim_delay)
+    return ok or false
+end
+
 local function try_cast(spell_id, target, player_pos, anim_delay, self_cast)
     anim_delay = anim_delay or 0.05
 
@@ -232,8 +256,8 @@ function rotation_engine.tick(equipped_ids, settings)
         local spell_id = entry.spell_id
         local cfg      = entry.cfg
 
-        -- Self-cast spells don't need enemies present
-        if not cfg.self_cast then
+        -- Self-cast and cursor-targeted spells don't need enemies present
+        if not cfg.self_cast and (cfg.target_mode or 0) ~= 5 then
             if not targets.is_valid or (targets.enemy_count or 0) <= 0 then
                 goto next_spell
             end
@@ -269,15 +293,47 @@ function rotation_engine.tick(equipped_ids, settings)
             if nearby < cfg.min_enemies then goto next_spell end
         end
 
+        -- Determine cast method: 0=Normal, 1=Evade key press
+        local cast_method = cfg.cast_method or 0
+
         -- For self-cast, skip target selection entirely
         if cfg.self_cast then
-            if try_cast(spell_id, nil, player_pos, settings.anim_delay or 0.05, true) then
+            local did_cast = false
+            if cast_method == 1 then
+                did_cast = try_evade_cast(spell_id, cfg.evade_key)
+            else
+                did_cast = try_cast(spell_id, nil, player_pos, settings.anim_delay or 0.05, true)
+            end
+            if did_cast then
                 spell_tracker.record_cast(spell_id, cfg.charges)
                 _apply_chain(cfg)
                 _gcd_until = get_time_since_inject() + GLOBAL_GCD
                 if settings.debug then
-                    console.print(string.format('[UniversalRota] Self-Cast: %s (id=%d pri=%d eff=%d)',
-                        entry.name, spell_id, cfg.priority, entry.eff_pri))
+                    local method_tag = cast_method == 1 and ' [EVADE]' or ''
+                    console.print(string.format('[UniversalRota] Self-Cast: %s (id=%d pri=%d eff=%d%s)',
+                        entry.name, spell_id, cfg.priority, entry.eff_pri, method_tag))
+                end
+                return true
+            end
+            goto next_spell
+        end
+
+        -- Cursor targeting mode (target_mode == 5): cast at cursor position, no enemy needed
+        if (cfg.target_mode or 0) == 5 then
+            local did_cast = false
+            if cast_method == 1 then
+                did_cast = try_evade_cast(spell_id, cfg.evade_key)
+            else
+                did_cast = try_cursor_cast(spell_id, settings.anim_delay or 0.05)
+            end
+            if did_cast then
+                spell_tracker.record_cast(spell_id, cfg.charges)
+                _apply_chain(cfg)
+                _gcd_until = get_time_since_inject() + GLOBAL_GCD
+                if settings.debug then
+                    local method_tag = cast_method == 1 and ' [EVADE]' or ''
+                    console.print(string.format('[UniversalRota] Cursor-Cast: %s (id=%d pri=%d eff=%d%s)',
+                        entry.name, spell_id, cfg.priority, entry.eff_pri, method_tag))
                 end
                 return true
             end
@@ -298,15 +354,22 @@ function rotation_engine.tick(equipped_ids, settings)
                 goto next_spell
             end
 
-            if try_cast(spell_id, target, player_pos, settings.anim_delay or 0.05, false) then
+            local did_cast = false
+            if cast_method == 1 then
+                did_cast = try_evade_cast(spell_id, cfg.evade_key)
+            else
+                did_cast = try_cast(spell_id, target, player_pos, settings.anim_delay or 0.05, false)
+            end
+            if did_cast then
                 spell_tracker.record_cast(spell_id, cfg.charges)
                 _apply_chain(cfg)
                 _gcd_until = get_time_since_inject() + GLOBAL_GCD
                 if settings.debug then
-                    local mode_names = { [0]='Priority', [1]='Closest', [2]='LowestHP', [3]='HighestHP', [4]='Cleave' }
-                    console.print(string.format('[UniversalRota] Cast: %s (id=%d pri=%d eff=%d mode=%s)',
+                    local mode_names = { [0]='Priority', [1]='Closest', [2]='LowestHP', [3]='HighestHP', [4]='Cleave', [5]='Cursor' }
+                    local method_tag = cast_method == 1 and ' [EVADE]' or ''
+                    console.print(string.format('[UniversalRota] Cast: %s (id=%d pri=%d eff=%d mode=%s%s)',
                         entry.name, spell_id, cfg.priority, entry.eff_pri,
-                        mode_names[cfg.target_mode or 0] or '?'))
+                        mode_names[cfg.target_mode or 0] or '?', method_tag))
                 end
                 return true
             end

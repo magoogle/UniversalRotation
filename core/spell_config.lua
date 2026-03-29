@@ -13,8 +13,9 @@ local _chain_state = {}
 local buff_provider = require 'core.buff_provider'
 local target_selector = require 'core.target_selector'
 
-local TARGET_MODE_LABELS = { 'Priority', 'Closest', 'Lowest HP', 'Highest HP', 'Cleave Center' }
+local TARGET_MODE_LABELS = { 'Priority', 'Closest', 'Lowest HP', 'Highest HP', 'Cleave Center', 'Cursor' }
 local RESOURCE_MODE_LABELS = { 'Below %', 'Above %' }
+local CAST_METHOD_LABELS = { 'Normal', 'Evade (Spacebar)' }
 
 local function key(spell_id, suffix)
     return plugin_label .. '_spell_' .. tostring(spell_id) .. '_' .. suffix
@@ -85,6 +86,10 @@ local function get_elements(spell_id)
         use_resource    = checkbox:new(false, get_hash(key(spell_id, 'use_resource'))),
         resource_mode   = combo_box:new(1, get_hash(key(spell_id, 'resource_mode'))),  -- default: Above %
         resource_pct    = slider_int:new(1, 100, 50, get_hash(key(spell_id, 'resource_pct'))),
+
+        -- Cast method: 0=Normal, 1=Evade (Spacebar key press)
+        cast_method     = combo_box:new(0, get_hash(key(spell_id, 'cast_method'))),
+        evade_key       = slider_int:new(0x01, 0xFF, 0x20, get_hash(key(spell_id, 'evade_key'))),  -- default: 0x20 = Space
     }
 
     _elements[id] = e
@@ -175,6 +180,13 @@ function spell_config.render(spell_id, display_name, equipped_ids, all_known_ids
 
     e.priority:render('Priority (1=highest)', 'Lower number = cast first')
 
+    -- Cast Method
+    e.cast_method:render('Cast Method', CAST_METHOD_LABELS, 'Normal = standard spell cast. Evade = press a key instead (for evade-replacement skills bound to spacebar)')
+    local cast_method = e.cast_method:get() or 0
+    if cast_method == 1 then
+        e.evade_key:render('Key (VK code)', 'Virtual-key code to press (0x20=Space, 0x45=E, etc.)', 1)
+    end
+
     -- Self Cast
     e.self_cast:render('Self Cast', 'Cast on yourself — no target required (useful for buffs, movement, and AoE centered on player)')
 
@@ -190,10 +202,12 @@ function spell_config.render(spell_id, display_name, equipped_ids, all_known_ids
         e.range:render(range_label, range_tip, 1)
 
         -- Target mode
-        e.target_mode:render('Target Mode', TARGET_MODE_LABELS, 'How to select which enemy to target for this spell')
+        e.target_mode:render('Target Mode', TARGET_MODE_LABELS, 'How to select which enemy to target for this spell. Cursor = cast at mouse cursor position (for Teleport, Advance, etc.)')
 
         local tmode = e.target_mode:get() or 0
-        if tmode == target_selector.MODE_CLEAVE then
+        if tmode == 5 then
+            -- Cursor mode: no aoe/cleave settings needed, just range
+        elseif tmode == target_selector.MODE_CLEAVE then
             e.aoe_range:render('Cleave radius (yds)', 'Picks the enemy with the most others within this radius', 1)
         else
             e.aoe_range:render('AOE check radius (yds)', 'Count enemies within this radius of your character (used for Min enemies)', 1)
@@ -338,6 +352,9 @@ function spell_config.get(spell_id)
         chain_target_id = cs.target_id or 0,
         chain_boost     = e.chain_boost:get(),
         chain_duration  = e.chain_duration:get(),
+
+        cast_method     = e.cast_method:get(),       -- 0=Normal, 1=Evade key
+        evade_key       = e.evade_key:get(),          -- VK code (default 0x20=Space)
     }
 end
 
@@ -382,6 +399,9 @@ function spell_config.apply(spell_id, cfg)
     _set_element(e.use_chain,     cfg.use_chain)
     _set_element(e.chain_boost,   cfg.chain_boost)
     _set_element(e.chain_duration, cfg.chain_duration)
+
+    _set_element(e.cast_method,   cfg.cast_method)
+    _set_element(e.evade_key,     cfg.evade_key)
 
     if type(cfg.buff_hash) == 'number' then st.buff_hash = cfg.buff_hash end
     if type(cfg.buff_name) == 'string' then st.buff_name = cfg.buff_name end

@@ -106,6 +106,8 @@ local function _class_key()
         [2] = 'druid',
         [3] = 'rogue',
         [6] = 'necromancer',
+        [7] = 'spiritborn',
+        [8] = 'warlock',
         [9] = 'paladin',
     }
     if cid ~= nil and map[cid] then return map[cid] end
@@ -258,7 +260,7 @@ local function render_overlay()
 
     -- Chain boost tracking (mirror rotation_engine's internal table isn't exposed,
     -- so we read from spell_config chain fields to show a UI hint only)
-    local TARGET_MODE_SHORT = { [0]='PRI', [1]='NEAR', [2]='LHP', [3]='HHP', [4]='CLV' }
+    local TARGET_MODE_SHORT = { [0]='PRI', [1]='NEAR', [2]='LHP', [3]='HHP', [4]='CLV', [5]='CUR' }
 
     local spell_list = {}
     for _, spell_id in ipairs(equipped_ids) do
@@ -295,6 +297,11 @@ local function render_overlay()
             end
         else
             mode_txt = ' [SELF]'
+        end
+
+        -- Annotate evade cast method
+        if (cfg.cast_method or 0) == 1 then
+            mode_txt = mode_txt .. ' [EVD]'
         end
 
         -- Resource condition hint

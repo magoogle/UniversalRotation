@@ -5,13 +5,15 @@ A dynamic, priority-based spell rotation engine for Diablo IV. Automatically sel
 ## Features
 
 - **Priority-Based Rotation** — Spells are cast in configurable priority order (1 = highest). One cast per frame with global cooldown enforcement.
-- **5 Targeting Modes** — Priority (Boss → Elite → Champion → Closest), Closest, Lowest HP, Highest HP, and Cleave Center (most enemies in radius).
+- **6 Targeting Modes** — Priority (Boss → Elite → Champion → Closest), Closest, Lowest HP, Highest HP, Cleave Center (most enemies in radius), and Cursor (cast at mouse position for transport skills like Teleport, Advance, etc.).
 - **Combo Chains** — Casting spell A can temporarily boost spell B's priority for a configurable duration, enabling skill combos.
 - **Buff Requirements** — Restrict spells to only cast when the player has a specific buff with a minimum stack count.
 - **Resource Conditions** — Cast spells only when primary resource is above or below a configurable threshold.
 - **Multi-Charge Tracking** — Supports spells with multiple charges and independent cooldown tracking per charge.
 - **Per-Class Profiles** — Automatic save/load of spell configurations per character class (JSON format). Includes manual import/export.
 - **On-Screen Overlay** — Displays equipped spells in priority order, color-coded by status (green = ready, yellow = cooldown, red = unavailable).
+- **Evade-Replacement Casting** — Spells that replace the evade skill can be cast via key press (spacebar by default) instead of the spell API. Configurable VK code per spell.
+- **Cursor Targeting** — Cast movement/transport spells (Teleport, Advance, etc.) at the current mouse cursor position for manual piloting during fast clears.
 - **Auto Movement** — Moves toward melee targets that are out of range before casting.
 
 ## Project Structure
@@ -51,10 +53,12 @@ UniversalRotation/
 |---------|-------|-------------|
 | Enable | Toggle | Include spell in rotation |
 | Priority | 1–10 | Cast order (lower = sooner) |
+| Cast Method | Normal / Evade | Normal = spell API. Evade = key press (for evade-replacement skills) |
+| Evade Key | VK code | Virtual-key code to press (default 0x20 = Spacebar) |
 | Spell Type | Auto / Melee / Ranged | Attack style |
 | Spell Range | 1.0–30.0 yds | Maximum cast distance |
 | AOE Range | 1.0–20.0 yds | Radius for enemy count checks |
-| Target Mode | 5 modes | Target selection algorithm |
+| Target Mode | 6 modes | Target selection algorithm (includes Cursor mode) |
 | Self Cast | Toggle | Cast at player position |
 | Min Enemies | 0–15 | Minimum nearby enemies to trigger |
 | Elite Only | Toggle | Only cast on bosses/elites |
@@ -81,7 +85,11 @@ Profiles are auto-detected and loaded by class ID:
 | 2 | Druid |
 | 3 | Rogue |
 | 6 | Necromancer |
+| 7 | Spiritborn |
+| 8 | Warlock* |
 | 9 | Paladin |
+
+*\*Warlock is not yet active in-game but is pre-mapped for future support.*
 
 Profiles are saved as `universal_rotation_<class>.json` and persist all spell and global settings.
 
