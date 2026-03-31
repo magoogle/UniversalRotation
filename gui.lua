@@ -62,18 +62,32 @@ gui.elements = {
     export_profile = cb(false, 'export_profile'),
     import_profile = cb(false, 'import_profile'),
 
+    -- Multi-profile controls
+    profile_combo   = combo_box:new(0, get_hash(plugin_label .. '_profile_combo')),
+    new_profile     = cb(false, 'new_profile'),
+    delete_profile  = cb(false, 'delete_profile'),
+
     equipped_tree  = tree_node:new(1),
     inactive_tree  = tree_node:new(1),
     evade_tree     = tree_node:new(1),
 }
 
-gui.render = function(spell_config, equipped_ids, all_known_ids)
+gui.render = function(spell_config, equipped_ids, all_known_ids, profile_names, active_profile)
     if not gui.elements.main_tree:push('Magoogles Universal Rotation | v' .. plugin_version) then return end
 
     gui.elements.enabled:render('Enable', 'Enable the universal rotation')
     gui.elements.use_keybind:render('Use keybind', 'Toggle rotation on/off with a key')
     if gui.elements.use_keybind:get() then
         gui.elements.keybind:render('Toggle Key', 'Key to toggle the rotation')
+    end
+
+    -- ---- Profile Selector ----
+    if profile_names and #profile_names > 0 then
+        gui.elements.profile_combo:render('Profile', profile_names, 'Switch between saved profiles for this class. Settings update immediately.')
+        gui.elements.new_profile:render('New Profile (copy current)', 'Create a new profile by copying all current settings')
+        if #profile_names > 1 then
+            gui.elements.delete_profile:render('Delete Current Profile', 'Permanently delete the active profile and switch to another')
+        end
     end
 
     if gui.elements.global_tree:push('Global Settings') then

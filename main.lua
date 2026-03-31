@@ -114,18 +114,87 @@ local function _class_key()
     return 'class_' .. tostring(cid or 'unknown')
 end
 
-local function _profile_path_for(class_key)
-    return get_script_root() .. 'universal_rotation_' .. tostring(class_key) .. '.json'
+-- ---- Multi-profile system ----
+-- Manifest per class: { active = "Default", profiles = {"Default", "Profile 2", ...} }
+local _profile_names  = {}   -- ordered list of profile names for current class
+local _active_profile = 'Default'
+local _last_profile_idx = nil  -- tracks combo selection to detect switches
+
+local function _manifest_path_for(class_key)
+    return get_script_root() .. 'universal_rotation_' .. tostring(class_key) .. '_manifest.json'
+end
+
+local function _profile_path_for(class_key, profile_name)
+    profile_name = profile_name or _active_profile
+    if profile_name == 'Default' then
+        -- Backwards compatible: Default profile uses the old filename
+        return get_script_root() .. 'universal_rotation_' .. tostring(class_key) .. '.json'
+    end
+    -- Sanitize name for filename: lowercase, replace spaces with underscores
+    local safe = tostring(profile_name):lower():gsub('%s+', '_'):gsub('[^%w_]', '')
+    return get_script_root() .. 'universal_rotation_' .. tostring(class_key) .. '_' .. safe .. '.json'
 end
 
 local function _profile_path()
-    return _profile_path_for(_class_key())
+    return _profile_path_for(_class_key(), _active_profile)
 end
 
-local function _export_profile(class_key)
+local function _load_manifest(class_key)
+    local path = _manifest_path_for(class_key)
+    local f = io.open(path, 'r')
+    if not f then
+        -- No manifest yet — check if the old default profile exists
+        _profile_names = { 'Default' }
+        _active_profile = 'Default'
+        return
+    end
+    local json = f:read('*a')
+    f:close()
+    local data = profile_io.from_json(json)
+    if type(data) ~= 'table' then
+        _profile_names = { 'Default' }
+        _active_profile = 'Default'
+        return
+    end
+    _profile_names = data.profiles or { 'Default' }
+    _active_profile = data.active or 'Default'
+    -- Ensure active profile is in the list
+    local found = false
+    for _, n in ipairs(_profile_names) do
+        if n == _active_profile then found = true; break end
+    end
+    if not found then _active_profile = _profile_names[1] or 'Default' end
+end
+
+local function _save_manifest(class_key)
+    local data = {
+        active   = _active_profile,
+        profiles = _profile_names,
+    }
+    local json = profile_io.to_json(data)
+    local path = _manifest_path_for(class_key)
+    pcall(function()
+        local f = assert(io.open(path, 'w'))
+        f:write(json)
+        f:close()
+    end)
+end
+
+local function _get_active_profile_index()
+    for i, n in ipairs(_profile_names) do
+        if n == _active_profile then return i - 1 end  -- 0-based for combo_box
+    end
+    return 0
+end
+
+local function _export_profile(class_key, profile_name)
+    class_key = class_key or _class_key()
+    profile_name = profile_name or _active_profile
+
     local data = {
         version = 2,
-        class   = class_key or _class_key(),
+        class   = class_key,
+        profile = profile_name,
         global  = {
             scan_range      = gui.elements.scan_range:get(),
             anim_delay      = gui.elements.anim_delay:get(),
@@ -145,7 +214,7 @@ local function _export_profile(class_key)
     data.spells[tostring(gui.VIRTUAL_EVADE_ID)] = spell_config.get(gui.VIRTUAL_EVADE_ID)
 
     local json = profile_io.to_json(data)
-    local path = _profile_path_for(class_key or _class_key())
+    local path = _profile_path_for(class_key, profile_name)
     local ok, err = pcall(function()
         local f = assert(io.open(path, 'w'))
         f:write(json)
@@ -153,27 +222,35 @@ local function _export_profile(class_key)
     end)
 
     if ok then
-        console.print('[UniversalRotation] Exported profile: ' .. path)
+        console.print('[UniversalRotation] Saved profile: ' .. profile_name .. ' (' .. path .. ')')
     else
-        console.print('[UniversalRotation] Export failed: ' .. tostring(err))
-        console.print('[UniversalRotation] JSON (copy/paste): ' .. json)
+        console.print('[UniversalRotation] Save failed: ' .. tostring(err))
     end
+
+    _save_manifest(class_key)
 end
 
-local function _import_profile(class_key, silent)
-    local path = _profile_path_for(class_key or _class_key())
+local function _import_profile(class_key, profile_name, silent)
+    class_key = class_key or _class_key()
+    profile_name = profile_name or _active_profile
+
+    local path = _profile_path_for(class_key, profile_name)
     local f = io.open(path, 'r')
     if not f then
-        console.print('[UniversalRotation] Import failed: file not found: ' .. path)
-        return
+        if not silent then
+            console.print('[UniversalRotation] Profile not found: ' .. profile_name .. ' (' .. path .. ')')
+        end
+        return false
     end
     local json = f:read('*a')
     f:close()
 
     local data = profile_io.from_json(json)
     if type(data) ~= 'table' then
-        console.print('[UniversalRotation] Import failed: invalid JSON')
-        return
+        if not silent then
+            console.print('[UniversalRotation] Import failed: invalid JSON for profile ' .. profile_name)
+        end
+        return false
     end
 
     if type(data.global) == 'table' then
@@ -204,18 +281,122 @@ local function _import_profile(class_key, silent)
     end
 
     if not silent then
-        console.print('[UniversalRotation] Imported profile: ' .. path)
+        console.print('[UniversalRotation] Loaded profile: ' .. profile_name)
     end
+    return true
+end
+
+local function _switch_profile(new_name, class_key)
+    class_key = class_key or _class_key()
+    if new_name == _active_profile then return end
+
+    -- Save current profile before switching
+    _export_profile(class_key, _active_profile)
+
+    -- Switch
+    _active_profile = new_name
+    _save_manifest(class_key)
+
+    -- Load new profile
+    _import_profile(class_key, new_name, false)
+end
+
+local function _create_new_profile(class_key)
+    class_key = class_key or _class_key()
+
+    -- Find next available name
+    local num = #_profile_names + 1
+    local name = 'Profile ' .. tostring(num)
+    -- Ensure unique
+    local exists = true
+    while exists do
+        exists = false
+        for _, n in ipairs(_profile_names) do
+            if n == name then exists = true; break end
+        end
+        if exists then
+            num = num + 1
+            name = 'Profile ' .. tostring(num)
+        end
+    end
+
+    -- Save current settings as the new profile (copy)
+    table.insert(_profile_names, name)
+    local old_active = _active_profile
+    _active_profile = name
+    _export_profile(class_key, name)
+    _save_manifest(class_key)
+
+    console.print('[UniversalRotation] Created new profile: ' .. name .. ' (copied from ' .. old_active .. ')')
+end
+
+local function _delete_profile(class_key)
+    class_key = class_key or _class_key()
+    if #_profile_names <= 1 then
+        console.print('[UniversalRotation] Cannot delete the last profile')
+        return
+    end
+
+    local to_delete = _active_profile
+    local path = _profile_path_for(class_key, to_delete)
+
+    -- Remove from list
+    for i, n in ipairs(_profile_names) do
+        if n == to_delete then
+            table.remove(_profile_names, i)
+            break
+        end
+    end
+
+    -- Switch to first remaining profile
+    _active_profile = _profile_names[1] or 'Default'
+    _save_manifest(class_key)
+
+    -- Delete the file
+    pcall(function() os.remove(path) end)
+
+    -- Load the new active profile
+    _import_profile(class_key, _active_profile, false)
+    console.print('[UniversalRotation] Deleted profile: ' .. to_delete)
 end
 
 local function handle_profile_io()
+    -- Manual export/import buttons (saves/loads the active profile)
     if gui.elements.export_profile and gui.elements.export_profile:get() then
         _export_profile()
         gui.elements.export_profile:set(false)
     end
     if gui.elements.import_profile and gui.elements.import_profile:get() then
-        _import_profile()
+        _import_profile(nil, _active_profile, false)
         gui.elements.import_profile:set(false)
+    end
+
+    -- New profile button
+    if gui.elements.new_profile and gui.elements.new_profile:get() then
+        _create_new_profile()
+        _last_profile_idx = _get_active_profile_index()
+        _set_element(gui.elements.profile_combo, _last_profile_idx)
+        gui.elements.new_profile:set(false)
+    end
+
+    -- Delete profile button
+    if gui.elements.delete_profile and gui.elements.delete_profile:get() then
+        _delete_profile()
+        _last_profile_idx = _get_active_profile_index()
+        _set_element(gui.elements.profile_combo, _last_profile_idx)
+        gui.elements.delete_profile:set(false)
+    end
+
+    -- Profile dropdown switching
+    if gui.elements.profile_combo then
+        local sel = gui.elements.profile_combo:get()
+        if type(sel) == 'number' and sel ~= _last_profile_idx then
+            local new_name = _profile_names[sel + 1]
+            if new_name and new_name ~= _active_profile then
+                _switch_profile(new_name)
+            end
+            _last_profile_idx = sel
+        end
     end
 end
 
@@ -223,11 +404,15 @@ local function handle_class_profiles()
     local ck = _class_key()
     if not last_class_key then
         last_class_key = ck
-        _import_profile(ck, true)
+        _load_manifest(ck)
+        _import_profile(ck, _active_profile, true)
+        _last_profile_idx = _get_active_profile_index()
+        _set_element(gui.elements.profile_combo, _last_profile_idx)
         return
     end
     if ck ~= last_class_key then
-        _export_profile(last_class_key)
+        -- Save current profile and manifest for old class
+        _export_profile(last_class_key, _active_profile)
 
         equipped_ids  = {}
         all_known_ids = {}
@@ -237,7 +422,10 @@ local function handle_class_profiles()
         buff_provider.clear_history()
 
         last_class_key = ck
-        _import_profile(ck, true)
+        _load_manifest(ck)
+        _import_profile(ck, _active_profile, true)
+        _last_profile_idx = _get_active_profile_index()
+        _set_element(gui.elements.profile_combo, _last_profile_idx)
     end
 end
 local function render_overlay()
@@ -263,7 +451,11 @@ local function render_overlay()
     end
 
     line('[ Universal Rotation ]', color_yellow(255))
-    line(string.format('%d spells equipped', #equipped_ids), color_white(180))
+    if _active_profile and _active_profile ~= 'Default' then
+        line(string.format('%s | %d spells', _active_profile, #equipped_ids), color_white(180))
+    else
+        line(string.format('%d spells equipped', #equipped_ids), color_white(180))
+    end
 
     local shown = 0
     local now_t = get_time_since_inject()
@@ -425,7 +617,7 @@ on_update(function()
 end)
 
 on_render_menu(function()
-    gui.render(spell_config, equipped_ids, all_known_ids)
+    gui.render(spell_config, equipped_ids, all_known_ids, _profile_names, _active_profile)
 end)
 
 on_render(function()
