@@ -39,6 +39,9 @@ end
 gui.plugin_label   = plugin_label
 gui.plugin_version = plugin_version
 
+-- Sentinel ID for virtual evade spell (won't collide with real spell IDs)
+gui.VIRTUAL_EVADE_ID = 999999999
+
 gui.elements = {
     main_tree      = tree_node:new(0),
     enabled        = cb(false, 'enabled'),
@@ -61,6 +64,7 @@ gui.elements = {
 
     equipped_tree  = tree_node:new(1),
     inactive_tree  = tree_node:new(1),
+    evade_tree     = tree_node:new(1),
 }
 
 gui.render = function(spell_config, equipped_ids, all_known_ids)
@@ -87,6 +91,13 @@ gui.render = function(spell_config, equipped_ids, all_known_ids)
         gui.elements.export_profile:render('Export class profile', 'Write current settings to a JSON file for sharing')
         gui.elements.import_profile:render('Import class profile', 'Load settings from the class JSON file (overwrites current)')
         gui.elements.global_tree:pop()
+    end
+
+    -- ---- Virtual Evade Spell ----
+    if gui.elements.evade_tree:push('Evade Spell') then
+        render_menu_header('Virtual spell that presses a key (spacebar by default). Participates in the rotation like any other spell.')
+        spell_config.render(gui.VIRTUAL_EVADE_ID, 'Evade', equipped_ids, all_known_ids)
+        gui.elements.evade_tree:pop()
     end
 
     local equipped_set = {}

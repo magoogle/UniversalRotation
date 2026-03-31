@@ -141,6 +141,8 @@ local function _export_profile(class_key)
     for _, sid in ipairs(all_known_ids) do
         data.spells[tostring(sid)] = spell_config.get(sid)
     end
+    -- Include virtual evade spell in profile
+    data.spells[tostring(gui.VIRTUAL_EVADE_ID)] = spell_config.get(gui.VIRTUAL_EVADE_ID)
 
     local json = profile_io.to_json(data)
     local path = _profile_path_for(class_key or _class_key())
@@ -275,9 +277,14 @@ local function render_overlay()
         if spell_id > 1 then
             local cfg = spell_config.get(spell_id)
             if cfg.enabled then
-                table.insert(spell_list, { id = spell_id, cfg = cfg })
+                table.insert(spell_list, { id = spell_id, cfg = cfg, is_virtual = false })
             end
         end
+    end
+    -- Include virtual evade spell
+    local evade_cfg = spell_config.get(gui.VIRTUAL_EVADE_ID)
+    if evade_cfg.enabled then
+        table.insert(spell_list, { id = gui.VIRTUAL_EVADE_ID, cfg = evade_cfg, is_virtual = true })
     end
     table.sort(spell_list, function(a, b) return a.cfg.priority < b.cfg.priority end)
 
@@ -286,8 +293,21 @@ local function render_overlay()
         shown = shown + 1
         local id   = entry.id
         local cfg  = entry.cfg
-        local name = _pretty_spell_name(get_name_for_spell(id)) or tostring(id)
-        local ready = utility.is_spell_ready(id) and utility.is_spell_affordable(id)
+        local is_virt = entry.is_virtual
+
+        local name
+        if is_virt then
+            name = 'Evade'
+        else
+            name = _pretty_spell_name(get_name_for_spell(id)) or tostring(id)
+        end
+
+        local ready
+        if is_virt then
+            ready = true  -- virtual spells are always "ready"
+        else
+            ready = utility.is_spell_ready(id) and utility.is_spell_affordable(id)
+        end
         local on_cd = not spell_tracker.is_off_cooldown(id, cfg.cooldown, cfg.charges)
 
         local charges_left, charges_max = spell_tracker.get_charges(id, cfg.charges)
@@ -307,9 +327,12 @@ local function render_overlay()
             mode_txt = ' [SELF]'
         end
 
-        -- Annotate evade cast method
-        if (cfg.cast_method or 0) == 1 then
-            mode_txt = mode_txt .. ' [EVD]'
+        -- Annotate cast method
+        local cm = cfg.cast_method or 0
+        if cm == 1 then
+            mode_txt = mode_txt .. ' [KEY]'
+        elseif cm == 2 then
+            mode_txt = mode_txt .. ' [FSS]'
         end
 
         -- Resource condition hint

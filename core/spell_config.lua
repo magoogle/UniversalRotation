@@ -15,7 +15,8 @@ local target_selector = require 'core.target_selector'
 
 local TARGET_MODE_LABELS = { 'Priority', 'Closest', 'Lowest HP', 'Highest HP', 'Cleave Center', 'Cursor' }
 local RESOURCE_MODE_LABELS = { 'Below %', 'Above %' }
-local CAST_METHOD_LABELS = { 'Normal', 'Evade (Spacebar)' }
+local CAST_METHOD_LABELS = { 'Normal', 'Key Press', 'Force Stand Still + Key' }
+local SKILL_SLOT_LABELS = { 'Slot 1', 'Slot 2', 'Slot 3', 'Slot 4', 'Slot 5', 'Slot 6' }
 
 local function key(spell_id, suffix)
     return plugin_label .. '_spell_' .. tostring(spell_id) .. '_' .. suffix
@@ -46,12 +47,21 @@ local function _ensure_buff_combo(e, spell_id)
     e.buff_combo = combo_box:new(default_idx, get_hash(key(spell_id, 'buff_combo')))
 end
 
+-- Sentinel ID for virtual evade spell
+spell_config.VIRTUAL_EVADE_ID = 999999999
+
 local function get_elements(spell_id)
     local id = tostring(spell_id)
     if _elements[id] then return _elements[id] end
 
+    -- Virtual evade spell defaults: disabled, key press mode, spacebar, self-cast
+    local is_virtual = (spell_id == spell_config.VIRTUAL_EVADE_ID)
+    local default_enabled = not is_virtual  -- virtual starts disabled
+    local default_cast_method = is_virtual and 1 or 0  -- 1=Key Press for virtual
+    local default_self_cast = is_virtual  -- virtual is always self-cast style
+
     local e = {
-        enabled      = checkbox:new(true,  get_hash(key(spell_id, 'enabled'))),
+        enabled      = checkbox:new(default_enabled, get_hash(key(spell_id, 'enabled'))),
         priority     = slider_int:new(1, 10, 5, get_hash(key(spell_id, 'priority'))),
 
         cooldown     = slider_float:new(0.0, 5.0, 0.4, get_hash(key(spell_id, 'cooldown'))),
@@ -74,7 +84,7 @@ local function get_elements(spell_id)
         min_enemies  = slider_int:new(0, 15, 0, get_hash(key(spell_id, 'min_enemies'))),
 
         -- Self cast: cast on player position, no target needed
-        self_cast    = checkbox:new(false, get_hash(key(spell_id, 'self_cast'))),
+        self_cast    = checkbox:new(default_self_cast, get_hash(key(spell_id, 'self_cast'))),
 
         -- Combo chain: after casting THIS spell, boost priority of another spell
         use_chain       = checkbox:new(false, get_hash(key(spell_id, 'use_chain'))),
@@ -87,9 +97,13 @@ local function get_elements(spell_id)
         resource_mode   = combo_box:new(1, get_hash(key(spell_id, 'resource_mode'))),  -- default: Above %
         resource_pct    = slider_int:new(1, 100, 50, get_hash(key(spell_id, 'resource_pct'))),
 
-        -- Cast method: 0=Normal, 1=Evade (Spacebar key press)
-        cast_method     = combo_box:new(0, get_hash(key(spell_id, 'cast_method'))),
+        -- Cast method: 0=Normal, 1=Key Press, 2=Force Stand Still + Key
+        cast_method     = combo_box:new(default_cast_method, get_hash(key(spell_id, 'cast_method'))),
         evade_key       = slider_int:new(0x01, 0xFF, 0x20, get_hash(key(spell_id, 'evade_key'))),  -- default: 0x20 = Space
+
+        -- Force Stand Still + Skill slot
+        force_hold_key  = slider_int:new(0x01, 0xFF, 0x10, get_hash(key(spell_id, 'force_hold_key'))),  -- default: 0x10 = Shift
+        skill_slot      = combo_box:new(0, get_hash(key(spell_id, 'skill_slot'))),  -- 0=Slot 1 (key '1'), etc.
     }
 
     _elements[id] = e
@@ -181,10 +195,13 @@ function spell_config.render(spell_id, display_name, equipped_ids, all_known_ids
     e.priority:render('Priority (1=highest)', 'Lower number = cast first')
 
     -- Cast Method
-    e.cast_method:render('Cast Method', CAST_METHOD_LABELS, 'Normal = standard spell cast. Evade = press a key instead (for evade-replacement skills bound to spacebar)')
+    e.cast_method:render('Cast Method', CAST_METHOD_LABELS, 'Normal = spell API. Key Press = send a key (evade/spacebar). Force Stand Still + Key = hold modifier + press skill slot key (for ranged melee like Payback, Clash)')
     local cast_method = e.cast_method:get() or 0
     if cast_method == 1 then
         e.evade_key:render('Key (VK code)', 'Virtual-key code to press (0x20=Space, 0x45=E, etc.)', 1)
+    elseif cast_method == 2 then
+        e.force_hold_key:render('Hold Key (VK code)', 'Modifier key to hold down (0x10=Shift, 0x11=Ctrl)', 1)
+        e.skill_slot:render('Skill Slot', SKILL_SLOT_LABELS, 'Which skill bar slot key to press (1-6)')
     end
 
     -- Self Cast
@@ -356,8 +373,10 @@ function spell_config.get(spell_id)
         chain_boost     = e.chain_boost:get(),
         chain_duration  = e.chain_duration:get(),
 
-        cast_method     = e.cast_method:get(),       -- 0=Normal, 1=Evade key
+        cast_method     = e.cast_method:get(),       -- 0=Normal, 1=Key Press, 2=Force Stand Still + Key
         evade_key       = e.evade_key:get(),          -- VK code (default 0x20=Space)
+        force_hold_key  = e.force_hold_key:get(),     -- VK code for modifier (default 0x10=Shift)
+        skill_slot      = e.skill_slot:get(),          -- 0-5 = slot 1-6
     }
 end
 
@@ -405,6 +424,8 @@ function spell_config.apply(spell_id, cfg)
 
     _set_element(e.cast_method,   cfg.cast_method)
     _set_element(e.evade_key,     cfg.evade_key)
+    _set_element(e.force_hold_key, cfg.force_hold_key)
+    _set_element(e.skill_slot,    cfg.skill_slot)
 
     if type(cfg.buff_hash) == 'number' then st.buff_hash = cfg.buff_hash end
     if type(cfg.buff_name) == 'string' then st.buff_name = cfg.buff_name end
@@ -418,6 +439,10 @@ function spell_config.apply(spell_id, cfg)
     st.last_list_sig = nil
     e.buff_combo  = nil
     e.chain_combo = nil  -- will be rebuilt lazily with fresh spell list
+end
+
+function spell_config.is_virtual(spell_id)
+    return spell_id == spell_config.VIRTUAL_EVADE_ID
 end
 
 return spell_config
