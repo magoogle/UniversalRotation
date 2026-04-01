@@ -410,11 +410,12 @@ function rotation_engine.tick(equipped_ids, settings)
             end
         end
 
-        -- Min enemies check (always uses player position radius, even for self-casts it's valid)
+        -- Min enemies check: use the higher of global minimum and per-spell minimum
         local aoe_check = cfg.aoe_range or 6.0
-        if cfg.min_enemies > 0 then
+        local effective_min = math.max(cfg.min_enemies or 0, settings.global_min_enemies or 0)
+        if effective_min > 0 then
             local nearby = target_selector.count_near(targets, player_pos, aoe_check)
-            if nearby < cfg.min_enemies then goto next_spell end
+            if nearby < effective_min then goto next_spell end
         end
 
         -- Determine cast method: 0=Normal, 1=Key Press, 2=Force Stand Still + Key

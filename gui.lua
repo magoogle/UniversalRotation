@@ -51,6 +51,7 @@ gui.elements = {
     global_tree    = tree_node:new(1),
     scan_range     = sf(5.0, 30.0, 16.0, 'scan_range'),
     anim_delay     = sf(0.0, 0.5,  0.05, 'anim_delay'),
+    global_min_enemies = si(0, 15, 0, 'global_min_enemies'),
     debug_mode     = cb(false, 'debug_mode'),
 
 
@@ -95,6 +96,7 @@ gui.render = function(spell_config, equipped_ids, all_known_ids, profile_names, 
     if gui.elements.global_tree:push('Global Settings') then
         gui.elements.scan_range:render('Scan Range (yds)', 'How far to scan for enemies', 1)
         gui.elements.anim_delay:render('Animation Delay (s)', 'Global animation delay after each cast', 2)
+        gui.elements.global_min_enemies:render('Global Min Enemies', 'Minimum enemies required globally before any spell fires (0 = off). Per-spell min is also respected — whichever is higher wins.', 1)
         gui.elements.debug_mode:render('Debug Mode', 'Print cast info to console')
 
         gui.elements.overlay_enabled:render('Overlay', 'Show/hide the on-screen overlay')

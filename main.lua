@@ -17,12 +17,13 @@ local last_scan     = -999
 local last_class_key = nil
 
 local settings = {
-    scan_range       = 16.0,
-    anim_delay       = 0.05,
-    debug            = false,
-    overlay_enabled  = true,
-    overlay_x        = 20,
-    overlay_y        = 12,
+    scan_range         = 16.0,
+    anim_delay         = 0.05,
+    global_min_enemies = 0,
+    debug              = false,
+    overlay_enabled    = true,
+    overlay_x          = 20,
+    overlay_y          = 12,
     overlay_show_buffs = false,
 }
 
@@ -58,9 +59,10 @@ local function refresh_equipped()
 end
 
 local function update_settings()
-    settings.scan_range = gui.elements.scan_range:get()
-    settings.anim_delay = gui.elements.anim_delay:get()
-    settings.debug           = gui.elements.debug_mode:get()
+    settings.scan_range         = gui.elements.scan_range:get()
+    settings.anim_delay         = gui.elements.anim_delay:get()
+    settings.global_min_enemies = gui.elements.global_min_enemies and gui.elements.global_min_enemies:get() or 0
+    settings.debug              = gui.elements.debug_mode:get()
     settings.overlay_enabled = gui.elements.overlay_enabled:get()
     settings.overlay_x       = gui.elements.overlay_x:get()
     settings.overlay_y       = gui.elements.overlay_y:get()
@@ -197,12 +199,13 @@ local function _export_profile(class_key, profile_name)
         class   = class_key,
         profile = profile_name,
         global  = {
-            scan_range      = gui.elements.scan_range:get(),
-            anim_delay      = gui.elements.anim_delay:get(),
-            debug_mode      = gui.elements.debug_mode:get(),
-            overlay_enabled = gui.elements.overlay_enabled:get(),
-            overlay_x       = gui.elements.overlay_x:get(),
-            overlay_y       = gui.elements.overlay_y:get(),
+            scan_range         = gui.elements.scan_range:get(),
+            anim_delay         = gui.elements.anim_delay:get(),
+            global_min_enemies = gui.elements.global_min_enemies and gui.elements.global_min_enemies:get() or 0,
+            debug_mode         = gui.elements.debug_mode:get(),
+            overlay_enabled    = gui.elements.overlay_enabled:get(),
+            overlay_x          = gui.elements.overlay_x:get(),
+            overlay_y          = gui.elements.overlay_y:get(),
         },
         spells = {},
         buff_history = buff_provider.export_history(),
@@ -255,12 +258,13 @@ local function _import_profile(class_key, profile_name, silent)
     end
 
     if type(data.global) == 'table' then
-        _set_element(gui.elements.scan_range,      data.global.scan_range)
-        _set_element(gui.elements.anim_delay,      data.global.anim_delay)
-        _set_element(gui.elements.debug_mode,      data.global.debug_mode)
-        _set_element(gui.elements.overlay_enabled, data.global.overlay_enabled)
-        _set_element(gui.elements.overlay_x,       data.global.overlay_x)
-        _set_element(gui.elements.overlay_y,       data.global.overlay_y)
+        _set_element(gui.elements.scan_range,         data.global.scan_range)
+        _set_element(gui.elements.anim_delay,         data.global.anim_delay)
+        _set_element(gui.elements.global_min_enemies, data.global.global_min_enemies)
+        _set_element(gui.elements.debug_mode,         data.global.debug_mode)
+        _set_element(gui.elements.overlay_enabled,    data.global.overlay_enabled)
+        _set_element(gui.elements.overlay_x,          data.global.overlay_x)
+        _set_element(gui.elements.overlay_y,          data.global.overlay_y)
     end
 
     -- Restore buff history so previously seen buffs appear in dropdowns
