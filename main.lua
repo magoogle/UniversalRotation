@@ -119,6 +119,7 @@ end
 local _profile_names  = {}   -- ordered list of profile names for current class
 local _active_profile = 'Default'
 local _last_profile_idx = nil  -- tracks combo selection to detect switches
+local _rename_was_open = false -- tracks input_text open state to detect submission
 
 local function _manifest_path_for(class_key)
     return get_script_root() .. 'universal_rotation_' .. tostring(class_key) .. '_manifest.json'
@@ -360,6 +361,50 @@ local function _delete_profile(class_key)
     console.print('[UniversalRotation] Deleted profile: ' .. to_delete)
 end
 
+local function _rename_profile(new_name, class_key)
+    class_key = class_key or _class_key()
+    new_name = tostring(new_name):gsub('^%s+', ''):gsub('%s+$', '')  -- trim
+    if new_name == '' then return end
+    if new_name == _active_profile then return end
+
+    -- Check for duplicate
+    for _, n in ipairs(_profile_names) do
+        if n == new_name then
+            console.print('[UniversalRotation] Profile name already exists: ' .. new_name)
+            return
+        end
+    end
+
+    local old_name = _active_profile
+    local old_path = _profile_path_for(class_key, old_name)
+    local new_path = _profile_path_for(class_key, new_name)
+
+    -- Update list in-place
+    for i, n in ipairs(_profile_names) do
+        if n == old_name then
+            _profile_names[i] = new_name
+            break
+        end
+    end
+    _active_profile = new_name
+
+    -- Rename the file: write under new name, delete old (os.rename may not work cross-device)
+    local f = io.open(old_path, 'r')
+    if f then
+        local content = f:read('*a')
+        f:close()
+        local fw = io.open(new_path, 'w')
+        if fw then
+            fw:write(content)
+            fw:close()
+        end
+        pcall(function() os.remove(old_path) end)
+    end
+
+    _save_manifest(class_key)
+    console.print('[UniversalRotation] Renamed profile: ' .. old_name .. ' → ' .. new_name)
+end
+
 local function handle_profile_io()
     -- Manual export/import buttons (saves/loads the active profile)
     if gui.elements.export_profile and gui.elements.export_profile:get() then
@@ -385,6 +430,21 @@ local function handle_profile_io()
         _last_profile_idx = _get_active_profile_index()
         _set_element(gui.elements.profile_combo, _last_profile_idx)
         gui.elements.delete_profile:set(false)
+    end
+
+    -- Profile rename input
+    local rename_el = gui.elements.profile_rename
+    if rename_el then
+        local currently_open = rename_el:is_open()
+        if _rename_was_open and not currently_open then
+            local new_name = rename_el:get()
+            if new_name and new_name ~= '' then
+                _rename_profile(new_name)
+                _last_profile_idx = _get_active_profile_index()
+                _set_element(gui.elements.profile_combo, _last_profile_idx)
+            end
+        end
+        _rename_was_open = currently_open
     end
 
     -- Profile dropdown switching

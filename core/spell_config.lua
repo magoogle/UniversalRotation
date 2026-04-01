@@ -17,6 +17,7 @@ local TARGET_MODE_LABELS = { 'Priority', 'Closest', 'Lowest HP', 'Highest HP', '
 local RESOURCE_MODE_LABELS = { 'Below %', 'Above %' }
 local CAST_METHOD_LABELS = { 'Normal', 'Key Press', 'Force Stand Still + Key' }
 local SKILL_SLOT_LABELS = { 'Slot 1', 'Slot 2', 'Slot 3', 'Slot 4', 'Slot 5', 'Slot 6' }
+local EVADE_AIM_LABELS = { 'No Aim (cursor as-is)', 'Towards Next Enemy', 'Orbwalker Direction' }
 
 local function key(spell_id, suffix)
     return plugin_label .. '_spell_' .. tostring(spell_id) .. '_' .. suffix
@@ -100,6 +101,9 @@ local function get_elements(spell_id)
         -- Cast method: 0=Normal, 1=Key Press, 2=Force Stand Still + Key
         cast_method     = combo_box:new(default_cast_method, get_hash(key(spell_id, 'cast_method'))),
         evade_key       = slider_int:new(0x01, 0xFF, 0x20, get_hash(key(spell_id, 'evade_key'))),  -- default: 0x20 = Space
+
+        -- Evade aim mode (only for Key Press method): 0=no aim, 1=towards enemy, 2=orbwalker direction
+        evade_aim_mode  = combo_box:new(0, get_hash(key(spell_id, 'evade_aim_mode'))),
 
         -- Force Stand Still + Skill slot
         force_hold_key  = slider_int:new(0x01, 0xFF, 0x10, get_hash(key(spell_id, 'force_hold_key'))),  -- default: 0x10 = Shift
@@ -199,6 +203,7 @@ function spell_config.render(spell_id, display_name, equipped_ids, all_known_ids
     local cast_method = e.cast_method:get() or 0
     if cast_method == 1 then
         e.evade_key:render('Key (VK code)', 'Virtual-key code to press (0x20=Space, 0x45=E, etc.)', 1)
+        e.evade_aim_mode:render('Aim Direction', EVADE_AIM_LABELS, 'Where to aim before pressing the key. "Towards Enemy" moves cursor to closest target. "Orbwalker" respects current orb mode (clear=toward, flee=away)', 1)
     elseif cast_method == 2 then
         e.force_hold_key:render('Hold Key (VK code)', 'Modifier key to hold down (0x10=Shift, 0x11=Ctrl)', 1)
         e.skill_slot:render('Skill Slot', SKILL_SLOT_LABELS, 'Which skill bar slot key to press (1-6)')
@@ -375,6 +380,7 @@ function spell_config.get(spell_id)
 
         cast_method     = e.cast_method:get(),       -- 0=Normal, 1=Key Press, 2=Force Stand Still + Key
         evade_key       = e.evade_key:get(),          -- VK code (default 0x20=Space)
+        evade_aim_mode  = e.evade_aim_mode:get(),     -- 0=no aim, 1=towards enemy, 2=orbwalker direction
         force_hold_key  = e.force_hold_key:get(),     -- VK code for modifier (default 0x10=Shift)
         skill_slot      = e.skill_slot:get(),          -- 0-5 = slot 1-6
     }
@@ -422,10 +428,11 @@ function spell_config.apply(spell_id, cfg)
     _set_element(e.chain_boost,   cfg.chain_boost)
     _set_element(e.chain_duration, cfg.chain_duration)
 
-    _set_element(e.cast_method,   cfg.cast_method)
-    _set_element(e.evade_key,     cfg.evade_key)
+    _set_element(e.cast_method,    cfg.cast_method)
+    _set_element(e.evade_key,      cfg.evade_key)
+    _set_element(e.evade_aim_mode, cfg.evade_aim_mode)
     _set_element(e.force_hold_key, cfg.force_hold_key)
-    _set_element(e.skill_slot,    cfg.skill_slot)
+    _set_element(e.skill_slot,     cfg.skill_slot)
 
     if type(cfg.buff_hash) == 'number' then st.buff_hash = cfg.buff_hash end
     if type(cfg.buff_name) == 'string' then st.buff_name = cfg.buff_name end

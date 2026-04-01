@@ -64,6 +64,7 @@ gui.elements = {
 
     -- Multi-profile controls
     profile_combo   = combo_box:new(0, get_hash(plugin_label .. '_profile_combo')),
+    profile_rename  = input_text:new(get_hash(plugin_label .. '_profile_rename')),
     new_profile     = cb(false, 'new_profile'),
     delete_profile  = cb(false, 'delete_profile'),
 
@@ -84,6 +85,7 @@ gui.render = function(spell_config, equipped_ids, all_known_ids, profile_names, 
     -- ---- Profile Selector ----
     if profile_names and #profile_names > 0 then
         gui.elements.profile_combo:render('Profile', profile_names, 'Switch between saved profiles for this class. Settings update immediately.')
+        gui.elements.profile_rename:render('Rename Profile', 'Enter a new name for the active profile', true, 'Apply', 'Save the new profile name')
         gui.elements.new_profile:render('New Profile (copy current)', 'Create a new profile by copying all current settings')
         if #profile_names > 1 then
             gui.elements.delete_profile:render('Delete Current Profile', 'Permanently delete the active profile and switch to another')
