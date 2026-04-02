@@ -107,18 +107,46 @@ local function _apply_chain(cfg)
     end
 end
 
--- Get the effective priority of a spell (accounting for active chain boosts)
-local function _effective_priority(spell_id, base_priority)
+-- Cast counters for Stack Priority Mode: [spell_id] = { count, last_cast }
+local _stack_pri_counts = {}
+
+-- Get the effective priority of a spell (chain boosts + stack-based priority override)
+-- cfg is optional; if present, stack priority mode is evaluated
+local function _effective_priority(spell_id, base_priority, cfg)
     local now = get_time_since_inject()
+    local result = base_priority
+
+    -- Stack Priority Mode: cast at override priority for the first N casts,
+    -- then revert to normal. Counter resets after the configured idle window.
+    if cfg and cfg.use_stack_pri then
+        local sc = _stack_pri_counts[spell_id]
+        if sc and sc.last_cast > 0 and (now - sc.last_cast) > (cfg.stack_pri_reset or 4.0) then
+            sc.count = 0  -- reset: spell hasn't fired recently, start build phase again
+        end
+        local count = sc and sc.count or 0
+        if count < (cfg.stack_pri_count or 4) then
+            result = cfg.stack_pri_below_pri or base_priority
+        end
+    end
+
+    -- Chain boost: reduce priority number so the spell fires sooner
     local cb = _chain_boosts[spell_id]
     if cb and cb.expires > now then
-        -- Boost = reduce the priority number so it fires earlier
-        -- Clamp to at least 1 so it never goes negative
-        local boosted = base_priority - cb.boost
-        if boosted < 1 then boosted = 1 end
-        return boosted
+        result = math.max(1, result - cb.boost)
     end
-    return base_priority
+
+    return result
+end
+
+local function _record_stack_pri_cast(spell_id, cfg)
+    if not cfg or not cfg.use_stack_pri then return end
+    local sc = _stack_pri_counts[spell_id]
+    if not sc then
+        sc = { count = 0, last_cast = 0 }
+        _stack_pri_counts[spell_id] = sc
+    end
+    sc.count     = sc.count + 1
+    sc.last_cast = get_time_since_inject()
 end
 
 local function can_act()
@@ -342,7 +370,7 @@ function rotation_engine.tick(equipped_ids, settings)
             local cfg = spell_config.get(spell_id)
             if cfg.enabled then
                 local name = get_name_for_spell(spell_id) or tostring(spell_id)
-                local eff_pri = _effective_priority(spell_id, cfg.priority)
+                local eff_pri = _effective_priority(spell_id, cfg.priority, cfg)
                 table.insert(spell_list, {
                     spell_id = spell_id,
                     cfg      = cfg,
@@ -362,7 +390,7 @@ function rotation_engine.tick(equipped_ids, settings)
             spell_id = evade_id,
             cfg      = evade_cfg,
             name     = 'Evade',
-            eff_pri  = _effective_priority(evade_id, evade_cfg.priority),
+            eff_pri  = _effective_priority(evade_id, evade_cfg.priority, evade_cfg),
             is_virtual = true,
         })
     end
@@ -410,12 +438,15 @@ function rotation_engine.tick(equipped_ids, settings)
             end
         end
 
-        -- Min enemies check: use the higher of global minimum and per-spell minimum
+        -- Min enemies check: use the higher of global minimum and per-spell minimum.
+        -- Bosses and champions always bypass this — they are never ignored due to low mob count.
         local aoe_check = cfg.aoe_range or 6.0
         local effective_min = math.max(cfg.min_enemies or 0, settings.global_min_enemies or 0)
         if effective_min > 0 then
-            local nearby = target_selector.count_near(targets, player_pos, aoe_check)
-            if nearby < effective_min then goto next_spell end
+            if not (targets.has_boss or targets.has_champion) then
+                local nearby = target_selector.count_near(targets, player_pos, aoe_check)
+                if nearby < effective_min then goto next_spell end
+            end
         end
 
         -- Determine cast method: 0=Normal, 1=Key Press, 2=Force Stand Still + Key
@@ -442,6 +473,7 @@ function rotation_engine.tick(equipped_ids, settings)
             if did_cast then
                 spell_tracker.record_cast(spell_id, cfg.charges)
                 _apply_chain(cfg)
+                _record_stack_pri_cast(spell_id, cfg)
                 _gcd_until = get_time_since_inject() + GLOBAL_GCD
                 if settings.debug then
                     console.print(string.format('[UniversalRota] Self-Cast: %s (id=%s pri=%d eff=%d%s)',
@@ -460,6 +492,7 @@ function rotation_engine.tick(equipped_ids, settings)
             if did_cast then
                 spell_tracker.record_cast(spell_id, cfg.charges)
                 _apply_chain(cfg)
+                _record_stack_pri_cast(spell_id, cfg)
                 _gcd_until = get_time_since_inject() + GLOBAL_GCD
                 if settings.debug then
                     console.print(string.format('[UniversalRota] Cursor-Cast: %s (id=%s pri=%d eff=%d%s)',
@@ -490,6 +523,7 @@ function rotation_engine.tick(equipped_ids, settings)
             if did_cast then
                 spell_tracker.record_cast(spell_id, cfg.charges)
                 _apply_chain(cfg)
+                _record_stack_pri_cast(spell_id, cfg)
                 _gcd_until = get_time_since_inject() + GLOBAL_GCD
                 if settings.debug then
                     local mode_names = { [0]='Priority', [1]='Closest', [2]='LowestHP', [3]='HighestHP', [4]='Cleave', [5]='Cursor' }

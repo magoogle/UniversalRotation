@@ -10,6 +10,7 @@ local _buff_state = {}
 -- These are plain numbers/values so we store them in a side table, not UI elements
 local _chain_state = {}
 
+
 local buff_provider = require 'core.buff_provider'
 local target_selector = require 'core.target_selector'
 
@@ -97,6 +98,12 @@ local function get_elements(spell_id)
         use_resource    = checkbox:new(false, get_hash(key(spell_id, 'use_resource'))),
         resource_mode   = combo_box:new(1, get_hash(key(spell_id, 'resource_mode'))),  -- default: Above %
         resource_pct    = slider_int:new(1, 100, 50, get_hash(key(spell_id, 'resource_pct'))),
+
+        -- Stack Priority Mode: cast at override priority for N casts, then revert to normal
+        use_stack_pri       = checkbox:new(false, get_hash(key(spell_id, 'use_stack_pri'))),
+        stack_pri_count     = slider_int:new(1, 20, 4,   get_hash(key(spell_id, 'stack_pri_count'))),
+        stack_pri_below_pri = slider_int:new(1, 10, 1,   get_hash(key(spell_id, 'stack_pri_below_pri'))),
+        stack_pri_reset     = slider_float:new(0.5, 15.0, 4.0, get_hash(key(spell_id, 'stack_pri_reset'))),
 
         -- Cast method: 0=Normal, 1=Key Press, 2=Force Stand Still + Key
         cast_method     = combo_box:new(default_cast_method, get_hash(key(spell_id, 'cast_method'))),
@@ -310,6 +317,14 @@ function spell_config.render(spell_id, display_name, equipped_ids, all_known_ids
         e.resource_pct:render('Threshold %', 'Percentage of max resource (1-100). Skipped gracefully if API returns 0 (e.g. Rogue energy)')
     end
 
+    -- ---- Stack Priority Mode ----
+    e.use_stack_pri:render('Stack Priority Mode', 'Cast this spell at override priority for N casts, then revert to normal priority. Counter resets if the spell hasn\'t fired within the reset window (e.g. cast Clash 4x to build stacks, then fall back to normal rotation).')
+    if e.use_stack_pri:get() then
+        e.stack_pri_count:render('Casts before reverting', 'How many times to cast at the override priority before switching back to normal priority', 1)
+        e.stack_pri_below_pri:render('Override priority', 'Priority used during the build phase (1 = fires before everything else)', 1)
+        e.stack_pri_reset:render('Counter reset window (s)', 'If this spell hasn\'t been cast within this many seconds, the counter resets and the build phase starts again', 1)
+    end
+
     -- ---- Combo Chain ----
     e.use_chain:render('Combo Chain', 'After casting this spell, temporarily boost another spell\'s priority')
     if e.use_chain:get() then
@@ -340,7 +355,7 @@ function spell_config.render(spell_id, display_name, equipped_ids, all_known_ids
 end
 
 function spell_config.get(spell_id)
-    local e = get_elements(spell_id)
+    local e  = get_elements(spell_id)
     local st = _get_buff_state(spell_id)
     local cs = _get_chain_state(spell_id)
 
@@ -378,6 +393,11 @@ function spell_config.get(spell_id)
         chain_boost     = e.chain_boost:get(),
         chain_duration  = e.chain_duration:get(),
 
+        use_stack_pri       = e.use_stack_pri:get(),
+        stack_pri_count     = e.stack_pri_count:get(),
+        stack_pri_below_pri = e.stack_pri_below_pri:get(),
+        stack_pri_reset     = e.stack_pri_reset:get(),
+
         cast_method     = e.cast_method:get(),       -- 0=Normal, 1=Key Press, 2=Force Stand Still + Key
         evade_key       = e.evade_key:get(),          -- VK code (default 0x20=Space)
         evade_aim_mode  = e.evade_aim_mode:get(),     -- 0=no aim, 1=towards enemy, 2=orbwalker direction
@@ -400,7 +420,7 @@ end
 
 function spell_config.apply(spell_id, cfg)
     if type(cfg) ~= 'table' then return end
-    local e = get_elements(spell_id)
+    local e  = get_elements(spell_id)
     local st = _get_buff_state(spell_id)
     local cs = _get_chain_state(spell_id)
 
@@ -427,6 +447,11 @@ function spell_config.apply(spell_id, cfg)
     _set_element(e.use_chain,     cfg.use_chain)
     _set_element(e.chain_boost,   cfg.chain_boost)
     _set_element(e.chain_duration, cfg.chain_duration)
+
+    _set_element(e.use_stack_pri,       cfg.use_stack_pri)
+    _set_element(e.stack_pri_count,     cfg.stack_pri_count)
+    _set_element(e.stack_pri_below_pri, cfg.stack_pri_below_pri)
+    _set_element(e.stack_pri_reset,     cfg.stack_pri_reset)
 
     _set_element(e.cast_method,    cfg.cast_method)
     _set_element(e.evade_key,      cfg.evade_key)
