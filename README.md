@@ -105,7 +105,7 @@ Each class supports multiple named profiles. Profiles are stored as separate JSO
 
 Stack Priority Mode lets a spell "override" the normal rotation to build up resources or stacks before settling into steady-state behavior.
 
-**Example — Spiritborn Clash/Resolve rotation:**
+**Example — Clash/Resolve rotation:**
 
 | Spell | Normal Priority | Stack Pri | Override Pri | Casts | Reset |
 |-------|----------------|-----------|-------------|-------|-------|
