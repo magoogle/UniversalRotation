@@ -99,6 +99,11 @@ local function get_elements(spell_id)
         resource_mode   = combo_box:new(1, get_hash(key(spell_id, 'resource_mode'))),  -- default: Above %
         resource_pct    = slider_int:new(1, 100, 50, get_hash(key(spell_id, 'resource_pct'))),
 
+        -- Health condition
+        use_health      = checkbox:new(false, get_hash(key(spell_id, 'use_health'))),
+        health_mode     = combo_box:new(0, get_hash(key(spell_id, 'health_mode'))),  -- default: Below %
+        health_pct      = slider_int:new(1, 100, 50, get_hash(key(spell_id, 'health_pct'))),
+
         -- Stack Priority Mode: cast at override priority for N casts, then revert to normal
         use_stack_pri       = checkbox:new(false, get_hash(key(spell_id, 'use_stack_pri'))),
         stack_pri_count     = slider_int:new(1, 20, 4,   get_hash(key(spell_id, 'stack_pri_count'))),
@@ -317,6 +322,13 @@ function spell_config.render(spell_id, display_name, equipped_ids, all_known_ids
         e.resource_pct:render('Threshold %', 'Percentage of max resource (1-100). Skipped gracefully if API returns 0 (e.g. Rogue energy)')
     end
 
+    -- ---- Health Condition ----
+    e.use_health:render('Health Condition', 'Only cast when your health meets a threshold (e.g. defensive cooldowns below 40%, execute spells above 80%)')
+    if e.use_health:get() then
+        e.health_mode:render('Mode', RESOURCE_MODE_LABELS, 'Below %: cast when health is low (defensive). Above %: cast when healthy (offensive)')
+        e.health_pct:render('Threshold %', 'Percentage of max health (1-100)')
+    end
+
     -- ---- Stack Priority Mode ----
     e.use_stack_pri:render('Stack Priority Mode', 'Cast this spell at override priority for N casts, then revert to normal priority. Counter resets if the spell hasn\'t fired within the reset window (e.g. cast Clash 4x to build stacks, then fall back to normal rotation).')
     if e.use_stack_pri:get() then
@@ -388,6 +400,10 @@ function spell_config.get(spell_id)
         resource_mode   = e.resource_mode:get(),   -- 0=Below, 1=Above
         resource_pct    = e.resource_pct:get(),
 
+        use_health      = e.use_health:get(),
+        health_mode     = e.health_mode:get(),     -- 0=Below, 1=Above
+        health_pct      = e.health_pct:get(),
+
         use_chain       = e.use_chain:get(),
         chain_target_id = cs.target_id or 0,
         chain_boost     = e.chain_boost:get(),
@@ -443,6 +459,10 @@ function spell_config.apply(spell_id, cfg)
     _set_element(e.use_resource,  cfg.use_resource)
     _set_element(e.resource_mode, cfg.resource_mode)
     _set_element(e.resource_pct,  cfg.resource_pct)
+
+    _set_element(e.use_health,    cfg.use_health)
+    _set_element(e.health_mode,   cfg.health_mode)
+    _set_element(e.health_pct,    cfg.health_pct)
 
     _set_element(e.use_chain,     cfg.use_chain)
     _set_element(e.chain_boost,   cfg.chain_boost)

@@ -91,6 +91,33 @@ local function _check_resource_condition(cfg)
     end
 end
 
+local function _check_health_condition(cfg)
+    if not cfg.use_health then return true end
+
+    local lp = get_local_player()
+    if not lp then return true end
+
+    local cur, max_h
+    if type(lp.get_current_health) == 'function' then
+        local ok, v = pcall(lp.get_current_health, lp)
+        if ok and type(v) == 'number' and v > 0 then cur = v end
+    end
+    if type(lp.get_max_health) == 'function' then
+        local ok, v = pcall(lp.get_max_health, lp)
+        if ok and type(v) == 'number' and v > 0 then max_h = v end
+    end
+
+    if not cur or not max_h then return true end
+
+    local pct       = (cur / max_h) * 100.0
+    local threshold = tonumber(cfg.health_pct) or 50
+    local mode      = tonumber(cfg.health_mode) or 0  -- 0=Below, 1=Above
+
+    if mode == 0 then return pct < threshold
+    else              return pct >= threshold
+    end
+end
+
 -- Apply a chain boost after casting spell_id
 local function _apply_chain(cfg)
     if not cfg.use_chain then return end
@@ -199,7 +226,8 @@ end
 local function _get_aim_target(aim_mode, player_pos, scan_range)
     if aim_mode == 0 then return nil end
 
-    local enemy = target_selector.get_target_closer(player_pos, scan_range or 30)
+    local nearby = target_selector.get_targets(player_pos, scan_range or 30)
+    local enemy = nearby and nearby.closest
     if not enemy then return nil end
 
     local enemy_pos = nil
@@ -424,6 +452,9 @@ function rotation_engine.tick(equipped_ids, settings)
 
         -- Resource condition check
         if not _check_resource_condition(cfg) then goto next_spell end
+
+        -- Health condition check
+        if not _check_health_condition(cfg) then goto next_spell end
 
         if not cfg.self_cast then
             if cfg.boss_only and not targets.has_boss then goto next_spell end
