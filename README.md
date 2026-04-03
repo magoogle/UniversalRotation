@@ -77,6 +77,9 @@ UniversalRotation/
 | Resource Condition | Toggle | Gate cast on primary resource level |
 | Resource Mode | Below % / Above % | Cast when resource is low or high |
 | Resource Threshold | 1–100% | Percentage trigger point |
+| Health Condition | Toggle | Gate cast on player health percentage |
+| Health Mode | Below % / Above % | Below % for defensive cooldowns; Above % for offensive |
+| Health Threshold | 1–100% | Percentage of max health trigger point |
 | Stack Priority Mode | Toggle | Fire at override priority for N casts to build stacks, then revert |
 | Casts Before Reverting | 1–20 | How many casts to use override priority before switching back |
 | Override Priority | 1–10 | Priority used during the build phase |
@@ -96,10 +99,11 @@ A special entry at the bottom of each spell list representing a raw key press (d
 Each class supports multiple named profiles. Profiles are stored as separate JSON files and tracked via a per-class manifest file.
 
 - **Switch profiles** via the dropdown in the menu — settings update immediately
-- **New Profile** — copies current settings into a new profile
+- **New Profile** — saves the current profile first, then copies all settings into a new profile
 - **Delete Profile** — removes the active profile (disabled when only one profile exists)
 - **Rename Profile** — type a new name and click Apply
 - Profiles auto-save on class change and on profile switch
+- All global settings (including overlay options) are saved and restored per profile
 
 ## Stack Priority Mode — How It Works
 
@@ -143,10 +147,11 @@ Bosses and Champions bypass **all** minimum enemy requirements (both global and 
 ## How It Works
 
 1. **Spell Scanning** — Every 2 seconds, the equipped spell bar is scanned and spell configurations are initialised or loaded from the active profile.
-2. **Rotation Tick** — Each frame, spells are sorted by effective priority (accounting for Stack Priority Mode counters and active combo chain boosts), then each spell is checked in order: cooldown, readiness, resource, buffs, enemy counts, and target availability. The first spell that passes all checks is cast.
+2. **Rotation Tick** — Each frame, spells are sorted by effective priority (accounting for Stack Priority Mode counters and active combo chain boosts), then each spell is checked in order: cooldown, readiness, resource, health, buffs, enemy counts, and target availability. The first spell that passes all checks is cast.
 3. **Stack Priority Mode** — Effective priority is recalculated every tick by comparing the spell's cast counter against the configured target. When below target the override priority is used; at or above it the normal priority applies.
 4. **Combo Chains** — After a successful cast, if a combo chain is configured, the target spell's effective priority is temporarily reduced (boosted) for the configured duration.
-5. **Profile Persistence** — On class change or profile switch, the current profile is saved and the new profile is loaded. Buff history is saved per-profile so previously seen buffs remain available in dropdowns.
+5. **Profile Persistence** — On class change or profile switch, the current profile is saved and the new profile is loaded. All global settings and overlay options are included. Buff history is saved per-profile so previously seen buffs remain available in dropdowns.
+6. **Class Change Reset** — When switching characters, all internal state is fully cleared: cooldown timers, charge tracking, chain boosts, and stack priority counters all reset so the new class starts from a clean state.
 
 ## License
 

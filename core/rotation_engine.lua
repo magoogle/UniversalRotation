@@ -576,4 +576,11 @@ function rotation_engine.set_scan_range(r)
     _scan_range = r or 16.0
 end
 
+function rotation_engine.reset()
+    _gcd_until        = 0.0
+    _move_until       = 0.0
+    _chain_boosts     = {}
+    _stack_pri_counts = {}
+end
+
 return rotation_engine

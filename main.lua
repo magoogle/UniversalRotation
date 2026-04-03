@@ -206,6 +206,7 @@ local function _export_profile(class_key, profile_name)
             overlay_enabled    = gui.elements.overlay_enabled:get(),
             overlay_x          = gui.elements.overlay_x:get(),
             overlay_y          = gui.elements.overlay_y:get(),
+            overlay_show_buffs = gui.elements.overlay_show_buffs and gui.elements.overlay_show_buffs:get() or false,
         },
         spells = {},
         buff_history = buff_provider.export_history(),
@@ -265,6 +266,7 @@ local function _import_profile(class_key, profile_name, silent)
         _set_element(gui.elements.overlay_enabled,    data.global.overlay_enabled)
         _set_element(gui.elements.overlay_x,          data.global.overlay_x)
         _set_element(gui.elements.overlay_y,          data.global.overlay_y)
+        _set_element(gui.elements.overlay_show_buffs, data.global.overlay_show_buffs)
     end
 
     -- Restore buff history so previously seen buffs appear in dropdowns
@@ -325,9 +327,12 @@ local function _create_new_profile(class_key)
         end
     end
 
+    -- Persist current settings to the old profile before copying
+    local old_active = _active_profile
+    _export_profile(class_key, old_active)
+
     -- Save current settings as the new profile (copy)
     table.insert(_profile_names, name)
-    local old_active = _active_profile
     _active_profile = name
     _export_profile(class_key, name)
     _save_manifest(class_key)
@@ -484,6 +489,8 @@ local function handle_class_profiles()
         last_scan     = -999
 
         buff_provider.clear_history()
+        spell_tracker.reset_all()
+        rotation_engine.reset()
 
         last_class_key = ck
         _load_manifest(ck)
