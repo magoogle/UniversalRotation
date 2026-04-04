@@ -20,6 +20,24 @@ local CAST_METHOD_LABELS = { 'Normal', 'Key Press', 'Force Stand Still + Key' }
 local SKILL_SLOT_LABELS = { 'Slot 1', 'Slot 2', 'Slot 3', 'Slot 4', 'Slot 5', 'Slot 6' }
 local EVADE_AIM_LABELS = { 'No Aim (cursor as-is)', 'Towards Next Enemy', 'Orbwalker Direction' }
 
+-- Key press dropdown: labels shown to user, parallel VK code table
+local KEY_PRESS_LABELS = { 'Space', 'E', 'Q', 'R', 'F', 'G', 'X', 'Z',
+                            '1', '2', '3', '4', '5', '6',
+                            'Shift', 'Ctrl', 'Alt',
+                            'Mouse4', 'Mouse5' }
+local KEY_PRESS_CODES  = { 0x20,   0x45, 0x51, 0x52, 0x46, 0x47, 0x58, 0x5A,
+                            0x31,   0x32, 0x33, 0x34, 0x35, 0x36,
+                            0x10,   0x11, 0x12,
+                            0x05,   0x06 }
+
+-- Hold/modifier key dropdown for Force Stand Still
+local HOLD_KEY_LABELS = { 'Shift', 'Ctrl', 'Alt' }
+local HOLD_KEY_CODES  = { 0x10,   0x11,  0x12 }
+
+-- Expose tables so rotation_engine can read actual VK codes
+spell_config.KEY_PRESS_CODES = KEY_PRESS_CODES
+spell_config.HOLD_KEY_CODES  = HOLD_KEY_CODES
+
 local function key(spell_id, suffix)
     return plugin_label .. '_spell_' .. tostring(spell_id) .. '_' .. suffix
 end
@@ -112,13 +130,13 @@ local function get_elements(spell_id)
 
         -- Cast method: 0=Normal, 1=Key Press, 2=Force Stand Still + Key
         cast_method     = combo_box:new(default_cast_method, get_hash(key(spell_id, 'cast_method'))),
-        evade_key       = slider_int:new(0x01, 0xFF, 0x20, get_hash(key(spell_id, 'evade_key'))),  -- default: 0x20 = Space
+        evade_key       = combo_box:new(0, get_hash(key(spell_id, 'evade_key'))),  -- index into KEY_PRESS_CODES; default 0 = Space
 
         -- Evade aim mode (only for Key Press method): 0=no aim, 1=towards enemy, 2=orbwalker direction
         evade_aim_mode  = combo_box:new(0, get_hash(key(spell_id, 'evade_aim_mode'))),
 
         -- Force Stand Still + Skill slot
-        force_hold_key  = slider_int:new(0x01, 0xFF, 0x10, get_hash(key(spell_id, 'force_hold_key'))),  -- default: 0x10 = Shift
+        force_hold_key  = combo_box:new(0, get_hash(key(spell_id, 'force_hold_key'))),  -- index into HOLD_KEY_CODES; default 0 = Shift
         skill_slot      = combo_box:new(0, get_hash(key(spell_id, 'skill_slot'))),  -- 0=Slot 1 (key '1'), etc.
     }
 
@@ -214,11 +232,11 @@ function spell_config.render(spell_id, display_name, equipped_ids, all_known_ids
     e.cast_method:render('Cast Method', CAST_METHOD_LABELS, 'Normal = spell API. Key Press = send a key (evade/spacebar). Force Stand Still + Key = hold modifier + press skill slot key (for ranged melee like Payback, Clash)')
     local cast_method = e.cast_method:get() or 0
     if cast_method == 1 then
-        e.evade_key:render('Key (VK code)', 'Virtual-key code to press (0x20=Space, 0x45=E, etc.)', 1)
+        e.evade_key:render('Key', KEY_PRESS_LABELS, 'Key to press (for evade-replacement skills, spacebar, etc.)', 1)
         e.evade_aim_mode:render('Aim Direction', EVADE_AIM_LABELS, 'Where to aim before pressing the key. "Towards Enemy" moves cursor to closest target. "Orbwalker" respects current orb mode (clear=toward, flee=away)', 1)
     elseif cast_method == 2 then
-        e.force_hold_key:render('Hold Key (VK code)', 'Modifier key to hold down (0x10=Shift, 0x11=Ctrl)', 1)
-        e.skill_slot:render('Skill Slot', SKILL_SLOT_LABELS, 'Which skill bar slot key to press (1-6)')
+        e.force_hold_key:render('Hold Modifier', HOLD_KEY_LABELS, 'Modifier key to hold while pressing the skill slot key. Cursor moves to selected target before casting.', 1)
+        e.skill_slot:render('Skill Slot', SKILL_SLOT_LABELS, 'Which skill bar slot key to press (1-6)', 1)
     end
 
     -- Self Cast
@@ -415,9 +433,9 @@ function spell_config.get(spell_id)
         stack_pri_reset     = e.stack_pri_reset:get(),
 
         cast_method     = e.cast_method:get(),       -- 0=Normal, 1=Key Press, 2=Force Stand Still + Key
-        evade_key       = e.evade_key:get(),          -- VK code (default 0x20=Space)
+        evade_key       = KEY_PRESS_CODES[(e.evade_key:get() or 0) + 1] or 0x20,   -- actual VK code
         evade_aim_mode  = e.evade_aim_mode:get(),     -- 0=no aim, 1=towards enemy, 2=orbwalker direction
-        force_hold_key  = e.force_hold_key:get(),     -- VK code for modifier (default 0x10=Shift)
+        force_hold_key  = HOLD_KEY_CODES[(e.force_hold_key:get() or 0) + 1] or 0x10,  -- actual VK code
         skill_slot      = e.skill_slot:get(),          -- 0-5 = slot 1-6
     }
 end
@@ -474,10 +492,19 @@ function spell_config.apply(spell_id, cfg)
     _set_element(e.stack_pri_reset,     cfg.stack_pri_reset)
 
     _set_element(e.cast_method,    cfg.cast_method)
-    _set_element(e.evade_key,      cfg.evade_key)
     _set_element(e.evade_aim_mode, cfg.evade_aim_mode)
-    _set_element(e.force_hold_key, cfg.force_hold_key)
     _set_element(e.skill_slot,     cfg.skill_slot)
+    -- Map stored VK code back to combo index
+    if type(cfg.evade_key) == 'number' then
+        for i, code in ipairs(KEY_PRESS_CODES) do
+            if code == cfg.evade_key then _set_element(e.evade_key, i - 1); break end
+        end
+    end
+    if type(cfg.force_hold_key) == 'number' then
+        for i, code in ipairs(HOLD_KEY_CODES) do
+            if code == cfg.force_hold_key then _set_element(e.force_hold_key, i - 1); break end
+        end
+    end
 
     if type(cfg.buff_hash) == 'number' then st.buff_hash = cfg.buff_hash end
     if type(cfg.buff_name) == 'string' then st.buff_name = cfg.buff_name end

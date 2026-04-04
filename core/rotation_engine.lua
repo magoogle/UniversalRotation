@@ -299,8 +299,10 @@ local function try_key_cast(spell_id, vk_code, is_virtual, aim_mode, player_pos,
 end
 
 -- Force Stand Still + Skill Key: hold modifier, press skill slot key, release modifier
+-- Moves cursor to target_pos before casting so the skill fires at the correct target,
+-- then restores the cursor to its original position.
 -- Slot 0=key '1' (0x31), slot 1=key '2' (0x32), etc.
-local function try_force_standstill_cast(spell_id, hold_key, slot, is_virtual)
+local function try_force_standstill_cast(spell_id, hold_key, slot, is_virtual, target_pos)
     if not is_virtual then
         if not utility.is_spell_ready(spell_id) then return false end
         if not utility.is_spell_affordable(spell_id) then return false end
@@ -310,9 +312,25 @@ local function try_force_standstill_cast(spell_id, hold_key, slot, is_virtual)
     slot = slot or 0
     local slot_key = 0x31 + slot  -- 0x31='1', 0x32='2', etc.
 
+    -- Move cursor to the target position so FSS fires in the right direction
+    local cur_sx, cur_sy = nil, nil
+    if target_pos then
+        local sx, sy = _world_to_screen(target_pos)
+        if sx and sy then
+            local cur = get_cursor_position()
+            cur_sx, cur_sy = _world_to_screen(cur)
+            utility.send_mouse_move(sx, sy)
+        end
+    end
+
     utility.send_key_down(hold_key)
     utility.send_key_press(slot_key)
     utility.send_key_up(hold_key)
+
+    -- Restore cursor
+    if cur_sx and cur_sy then
+        utility.send_mouse_move(cur_sx, cur_sy)
+    end
     return true
 end
 
@@ -486,23 +504,23 @@ function rotation_engine.tick(equipped_ids, settings)
         local cast_method = cfg.cast_method or 0
         local METHOD_TAGS = { [0]='', [1]=' [KEY]', [2]=' [FSS]' }
 
-        -- Dispatch a cast using the configured method
-        -- Returns true if the cast succeeded
-        local function dispatch_cast(fallback_fn)
+        -- Dispatch a cast using the configured method.
+        -- aim_pos: world position to move the cursor to before FSS cast (nil = leave cursor as-is)
+        local function dispatch_cast(fallback_fn, aim_pos)
             if cast_method == 1 then
                 return try_key_cast(spell_id, cfg.evade_key, is_virtual, cfg.evade_aim_mode, player_pos, range)
             elseif cast_method == 2 then
-                return try_force_standstill_cast(spell_id, cfg.force_hold_key, cfg.skill_slot, is_virtual)
+                return try_force_standstill_cast(spell_id, cfg.force_hold_key, cfg.skill_slot, is_virtual, aim_pos)
             else
                 return fallback_fn()
             end
         end
 
-        -- For self-cast, skip target selection entirely
+        -- For self-cast, aim at player position
         if cfg.self_cast then
             local did_cast = dispatch_cast(function()
                 return try_cast(spell_id, nil, player_pos, settings.anim_delay or 0.05, true)
-            end)
+            end, player_pos)
             if did_cast then
                 spell_tracker.record_cast(spell_id, cfg.charges)
                 _apply_chain(cfg)
@@ -521,7 +539,7 @@ function rotation_engine.tick(equipped_ids, settings)
         if (cfg.target_mode or 0) == 5 then
             local did_cast = dispatch_cast(function()
                 return try_cursor_cast(spell_id, settings.anim_delay or 0.05)
-            end)
+            end, nil)  -- nil = leave cursor as-is for FSS too
             if did_cast then
                 spell_tracker.record_cast(spell_id, cfg.charges)
                 _apply_chain(cfg)
@@ -550,9 +568,11 @@ function rotation_engine.tick(equipped_ids, settings)
                 goto next_spell
             end
 
+            local target_pos = nil
+            pcall(function() target_pos = target:get_position() end)
             local did_cast = dispatch_cast(function()
                 return try_cast(spell_id, target, player_pos, settings.anim_delay or 0.05, false)
-            end)
+            end, target_pos)
             if did_cast then
                 spell_tracker.record_cast(spell_id, cfg.charges)
                 _apply_chain(cfg)
