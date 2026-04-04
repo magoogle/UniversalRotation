@@ -208,14 +208,16 @@ end
 -- D4 world uses x/y as horizontal plane; vec2:coordinate_to_screen() does the projection.
 local function _world_to_screen(world_pos)
     if not world_pos then return nil end
-    local ok, sx, sy = pcall(function()
+    local result = nil
+    pcall(function()
         local wx = type(world_pos.x) == 'function' and world_pos:x() or world_pos.x
         local wy = type(world_pos.y) == 'function' and world_pos:y() or world_pos.y
-        local v = vec2:new(wx, wy)
-        local s = v:coordinate_to_screen()
-        return s.x, s.y
+        local s = vec2:new(wx, wy):coordinate_to_screen()
+        local sx = type(s.x) == 'function' and s:x() or s.x
+        local sy = type(s.y) == 'function' and s:y() or s.y
+        if sx and sy then result = { sx, sy } end
     end)
-    if ok and sx and sy then return sx, sy end
+    if result then return result[1], result[2] end
     return nil
 end
 
