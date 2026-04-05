@@ -221,33 +221,67 @@ local function _world_to_screen(world_pos)
     return nil
 end
 
+-- Get the player's actual movement destination (where the orbwalker is heading).
+-- Uses get_move_destination() from the player object, which reflects pathfinder/orbwalker target.
+local function _get_player_move_dest()
+    local lp = get_local_player()
+    if not lp then return nil end
+
+    -- Try primary move destination
+    local dest = nil
+    pcall(function() dest = lp:get_move_destination() end)
+    if dest then
+        local ok, z = pcall(function() return dest:is_zero() end)
+        if not (ok and z) then return dest end
+    end
+
+    -- Fallback: secondary move destination
+    pcall(function() dest = lp:get_move_destination_2() end)
+    if dest then
+        local ok, z = pcall(function() return dest:is_zero() end)
+        if not (ok and z) then return dest end
+    end
+
+    return nil
+end
+
 -- Get aim target world position based on aim_mode:
 --   0 = towards closest enemy
---   1 = orbwalker direction (clear/pvp → toward enemy, flee → away)
+--   1 = orbwalker direction (use player's actual move destination)
 local function _get_aim_target(aim_mode, player_pos, scan_range)
+    if aim_mode == 1 then
+        -- Orbwalker direction: use where the player is actually moving toward.
+        -- This follows the orbwalker's pathing regardless of mode (clear, flee, etc.)
+        local move_dest = _get_player_move_dest()
+        if move_dest then
+            -- Extend the direction from player through the destination to ensure
+            -- the cursor is placed far enough in that direction
+            local extended = nil
+            pcall(function()
+                extended = player_pos:get_extended(move_dest, 15.0)
+            end)
+            return extended or move_dest
+        end
+
+        -- Fallback: if no move destination (player standing still), aim at nearest enemy
+        local nearby = target_selector.get_targets(player_pos, scan_range or 30)
+        local enemy = nearby and nearby.closest
+        if enemy then
+            local epos = nil
+            pcall(function() epos = enemy:get_position() end)
+            if epos then return epos end
+        end
+
+        return nil
+    end
+
+    -- Mode 0: towards closest enemy
     local nearby = target_selector.get_targets(player_pos, scan_range or 30)
     local enemy = nearby and nearby.closest
     if not enemy then return nil end
 
     local enemy_pos = nil
     pcall(function() enemy_pos = enemy:get_position() end)
-    if not enemy_pos then return nil end
-
-    if aim_mode == 1 then
-        -- Orbwalker direction
-        local orb_mode_val = 0
-        pcall(function() orb_mode_val = orbwalker.get_orb_mode() end)
-        if orb_mode_val == 4 then
-            -- Flee: aim AWAY from the nearest enemy
-            local flee_pos = nil
-            pcall(function()
-                flee_pos = enemy_pos:get_extended(player_pos, -15.0)
-            end)
-            return flee_pos or enemy_pos
-        end
-    end
-
-    -- Default (mode 0 or orbwalker non-flee): towards enemy
     return enemy_pos
 end
 
