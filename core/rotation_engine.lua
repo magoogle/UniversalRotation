@@ -221,68 +221,58 @@ local function _world_to_screen(world_pos)
     return nil
 end
 
--- Get the player's actual movement destination (where the orbwalker is heading).
--- Uses get_move_destination() from the player object, which reflects pathfinder/orbwalker target.
-local function _get_player_move_dest()
-    local lp = get_local_player()
-    if not lp then return nil end
-
-    -- Try primary move destination
-    local dest = nil
-    pcall(function() dest = lp:get_move_destination() end)
-    if dest then
-        local ok, z = pcall(function() return dest:is_zero() end)
-        if not (ok and z) then return dest end
-    end
-
-    -- Fallback: secondary move destination
-    pcall(function() dest = lp:get_move_destination_2() end)
-    if dest then
-        local ok, z = pcall(function() return dest:is_zero() end)
-        if not (ok and z) then return dest end
-    end
-
+-- Safely read a vec3 position, returning nil if it's invalid/zero/NaN
+local function _safe_vec3(pos)
+    if not pos then return nil end
+    local ok, val = pcall(function()
+        if pos:is_zero() then return nil end
+        if pos:is_nan() then return nil end
+        -- Validate we can actually read coordinates without crashing
+        local x = pos:x()
+        local y = pos:y()
+        if not x or not y then return nil end
+        return true
+    end)
+    if ok and val then return pos end
     return nil
 end
 
 -- Get aim target world position based on aim_mode:
 --   0 = towards closest enemy
---   1 = orbwalker direction (use player's actual move destination)
+--   1 = orbwalker direction (use player's movement direction)
 local function _get_aim_target(aim_mode, player_pos, scan_range)
-    if aim_mode == 1 then
-        -- Orbwalker direction: use where the player is actually moving toward.
-        -- This follows the orbwalker's pathing regardless of mode (clear, flee, etc.)
-        local move_dest = _get_player_move_dest()
-        if move_dest then
-            -- Extend the direction from player through the destination to ensure
-            -- the cursor is placed far enough in that direction
-            local extended = nil
-            pcall(function()
-                extended = player_pos:get_extended(move_dest, 15.0)
-            end)
-            return extended or move_dest
-        end
-
-        -- Fallback: if no move destination (player standing still), aim at nearest enemy
+    -- Helper: get nearest enemy position
+    local function _nearest_enemy_pos()
         local nearby = target_selector.get_targets(player_pos, scan_range or 30)
         local enemy = nearby and nearby.closest
-        if enemy then
-            local epos = nil
-            pcall(function() epos = enemy:get_position() end)
-            if epos then return epos end
+        if not enemy then return nil end
+        local epos = nil
+        pcall(function() epos = enemy:get_position() end)
+        return _safe_vec3(epos)
+    end
+
+    if aim_mode == 1 then
+        -- Orbwalker direction: use the player's move destination.
+        -- Only call if the player is actively moving to avoid reading stale/invalid data.
+        local lp = get_local_player()
+        if lp then
+            local is_moving = false
+            pcall(function() is_moving = lp:is_moving() end)
+
+            if is_moving then
+                local dest = nil
+                pcall(function() dest = lp:get_move_destination() end)
+                dest = _safe_vec3(dest)
+                if dest then return dest end
+            end
         end
 
-        return nil
+        -- Fallback: aim at nearest enemy
+        return _nearest_enemy_pos()
     end
 
     -- Mode 0: towards closest enemy
-    local nearby = target_selector.get_targets(player_pos, scan_range or 30)
-    local enemy = nearby and nearby.closest
-    if not enemy then return nil end
-
-    local enemy_pos = nil
-    pcall(function() enemy_pos = enemy:get_position() end)
-    return enemy_pos
+    return _nearest_enemy_pos()
 end
 
 -- Key-press cast: press a single key (evade / spacebar style)
