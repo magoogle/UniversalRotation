@@ -221,62 +221,40 @@ local function _world_to_screen(world_pos)
     return nil
 end
 
--- Safely read a vec3 position, returning nil if it's invalid/zero/NaN
-local function _safe_vec3(pos)
-    if not pos then return nil end
-    local ok, val = pcall(function()
-        if pos:is_zero() then return nil end
-        if pos:is_nan() then return nil end
-        -- Validate we can actually read coordinates without crashing
-        local x = pos:x()
-        local y = pos:y()
-        if not x or not y then return nil end
-        return true
-    end)
-    if ok and val then return pos end
-    return nil
-end
-
 -- Get aim target world position based on aim_mode:
 --   0 = towards closest enemy
---   1 = orbwalker direction (use player's movement direction)
+--   1 = orbwalker direction (clear/pvp -> toward enemy, flee -> away from enemy)
 local function _get_aim_target(aim_mode, player_pos, scan_range)
-    -- Helper: get nearest enemy position
-    local function _nearest_enemy_pos()
-        local nearby = target_selector.get_targets(player_pos, scan_range or 30)
-        local enemy = nearby and nearby.closest
-        if not enemy then return nil end
-        local epos = nil
-        pcall(function() epos = enemy:get_position() end)
-        return _safe_vec3(epos)
-    end
+    local nearby = target_selector.get_targets(player_pos, scan_range or 30)
+    local enemy = nearby and nearby.closest
+    if not enemy then return nil end
+
+    local enemy_pos = nil
+    pcall(function() enemy_pos = enemy:get_position() end)
+    if not enemy_pos then return nil end
 
     if aim_mode == 1 then
-        -- Orbwalker direction: use the player's move destination.
-        -- Only call if the player is actively moving to avoid reading stale/invalid data.
-        local lp = get_local_player()
-        if lp then
-            local is_moving = false
-            pcall(function() is_moving = lp:is_moving() end)
-
-            if is_moving then
-                local dest = nil
-                pcall(function() dest = lp:get_move_destination() end)
-                dest = _safe_vec3(dest)
-                if dest then return dest end
-            end
+        -- Orbwalker direction: read the mode enum to decide direction
+        local orb_mode_val = 0
+        pcall(function() orb_mode_val = orbwalker.get_orb_mode() end)
+        if orb_mode_val == 4 then
+            -- Flee: aim away from the nearest enemy
+            local flee_pos = nil
+            pcall(function()
+                flee_pos = player_pos:get_extended(enemy_pos, -15.0)
+            end)
+            return flee_pos or enemy_pos
         end
-
-        -- Fallback: aim at nearest enemy
-        return _nearest_enemy_pos()
+        -- Clear / PvP / None: aim toward enemy
+        return enemy_pos
     end
 
     -- Mode 0: towards closest enemy
-    return _nearest_enemy_pos()
+    return enemy_pos
 end
 
 -- Key-press cast: press a single key (evade / spacebar style)
--- Always aims at a target: aim_mode 0=towards enemy, 1=orbwalker direction
+-- aim_mode: 0=towards enemy, 1=orbwalker direction
 local function try_key_cast(spell_id, vk_code, is_virtual, aim_mode, player_pos, scan_range)
     if not is_virtual then
         if not utility.is_spell_ready(spell_id) then return false end
