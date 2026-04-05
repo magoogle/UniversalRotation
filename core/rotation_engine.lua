@@ -222,12 +222,9 @@ local function _world_to_screen(world_pos)
 end
 
 -- Get aim target world position based on aim_mode:
---   0 = no aim (nil)
---   1 = towards closest enemy
---   2 = orbwalker direction (clear/pvp → toward enemy, flee → away, else nil)
+--   0 = towards closest enemy
+--   1 = orbwalker direction (clear/pvp → toward enemy, flee → away)
 local function _get_aim_target(aim_mode, player_pos, scan_range)
-    if aim_mode == 0 then return nil end
-
     local nearby = target_selector.get_targets(player_pos, scan_range or 30)
     local enemy = nearby and nearby.closest
     if not enemy then return nil end
@@ -237,54 +234,43 @@ local function _get_aim_target(aim_mode, player_pos, scan_range)
     if not enemy_pos then return nil end
 
     if aim_mode == 1 then
-        -- Towards enemy
-        return enemy_pos, false
-    elseif aim_mode == 2 then
         -- Orbwalker direction
         local orb_mode_val = 0
         pcall(function() orb_mode_val = orbwalker.get_orb_mode() end)
         if orb_mode_val == 4 then
             -- Flee: aim AWAY from the nearest enemy
-            -- Extend the player position away from the enemy
             local flee_pos = nil
             pcall(function()
-                -- get_extended(point, distance): returns position extended FROM point BY distance
-                -- To flee: start from enemy, extend toward player, then beyond
                 flee_pos = enemy_pos:get_extended(player_pos, -15.0)
             end)
-            return flee_pos or nil, true
-        else
-            -- Clear / PvP / None: aim toward enemy
-            return enemy_pos, false
+            return flee_pos or enemy_pos
         end
     end
 
-    return nil
+    -- Default (mode 0 or orbwalker non-flee): towards enemy
+    return enemy_pos
 end
 
 -- Key-press cast: press a single key (evade / spacebar style)
--- aim_mode: 0=no aim, 1=towards enemy, 2=orbwalker direction
+-- Always aims at a target: aim_mode 0=towards enemy, 1=orbwalker direction
 local function try_key_cast(spell_id, vk_code, is_virtual, aim_mode, player_pos, scan_range)
     if not is_virtual then
         if not utility.is_spell_ready(spell_id) then return false end
         if not utility.is_spell_affordable(spell_id) then return false end
     end
 
-    vk_code   = vk_code or 0x20  -- default: spacebar
-    aim_mode  = aim_mode or 0
+    vk_code  = vk_code or 0x20  -- default: spacebar
+    aim_mode = aim_mode or 0
 
-    if aim_mode ~= 0 and player_pos then
+    if player_pos then
         local aim_pos = _get_aim_target(aim_mode, player_pos, scan_range)
         if aim_pos then
             local sx, sy = _world_to_screen(aim_pos)
             if sx and sy then
-                -- Save current cursor position, move to aim target, press key, restore
                 local cur = get_cursor_position()
                 local cur_sx, cur_sy = _world_to_screen(cur)
-
                 utility.send_mouse_move(sx, sy)
                 utility.send_key_press(vk_code)
-
                 if cur_sx and cur_sy then
                     utility.send_mouse_move(cur_sx, cur_sy)
                 end
@@ -293,7 +279,7 @@ local function try_key_cast(spell_id, vk_code, is_virtual, aim_mode, player_pos,
         end
     end
 
-    -- Fallback: just press the key with no cursor adjustment
+    -- Fallback if no enemy found or screen conversion failed: press key as-is
     utility.send_key_press(vk_code)
     return true
 end
@@ -506,8 +492,19 @@ function rotation_engine.tick(equipped_ids, settings)
 
         -- Dispatch a cast using the configured method.
         -- aim_pos: world position to move the cursor to before FSS cast (nil = leave cursor as-is)
+        -- When stack_pri_targeted is enabled and the spell is still in its build phase,
+        -- always use the normal targeted cast regardless of configured cast_method.
         local function dispatch_cast(fallback_fn, aim_pos)
-            if cast_method == 1 then
+            local in_build_phase = false
+            if cfg.use_stack_pri and cfg.stack_pri_targeted then
+                local sc = _stack_pri_counts[spell_id]
+                local count = sc and sc.count or 0
+                in_build_phase = count < (cfg.stack_pri_count or 4)
+            end
+
+            if in_build_phase then
+                return fallback_fn()  -- Normal targeted cast during stack build
+            elseif cast_method == 1 then
                 return try_key_cast(spell_id, cfg.evade_key, is_virtual, cfg.evade_aim_mode, player_pos, range)
             elseif cast_method == 2 then
                 return try_force_standstill_cast(spell_id, cfg.force_hold_key, cfg.skill_slot, is_virtual, aim_pos)

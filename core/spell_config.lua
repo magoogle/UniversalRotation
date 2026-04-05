@@ -18,7 +18,7 @@ local TARGET_MODE_LABELS = { 'Priority', 'Closest', 'Lowest HP', 'Highest HP', '
 local RESOURCE_MODE_LABELS = { 'Below %', 'Above %' }
 local CAST_METHOD_LABELS = { 'Normal', 'Key Press', 'Force Stand Still + Key' }
 local SKILL_SLOT_LABELS = { 'Slot 1', 'Slot 2', 'Slot 3', 'Slot 4', 'Slot 5', 'Slot 6' }
-local EVADE_AIM_LABELS = { 'No Aim (cursor as-is)', 'Towards Next Enemy', 'Orbwalker Direction' }
+local EVADE_AIM_LABELS = { 'Towards Next Enemy', 'Orbwalker Direction' }
 
 -- Key press dropdown: labels shown to user, parallel VK code table
 local KEY_PRESS_LABELS = { 'Space', 'E', 'Q', 'R', 'F', 'G', 'X', 'Z',
@@ -123,16 +123,17 @@ local function get_elements(spell_id)
         health_pct      = slider_int:new(1, 100, 50, get_hash(key(spell_id, 'health_pct'))),
 
         -- Stack Priority Mode: cast at override priority for N casts, then revert to normal
-        use_stack_pri       = checkbox:new(false, get_hash(key(spell_id, 'use_stack_pri'))),
-        stack_pri_count     = slider_int:new(1, 20, 4,   get_hash(key(spell_id, 'stack_pri_count'))),
-        stack_pri_below_pri = slider_int:new(1, 10, 1,   get_hash(key(spell_id, 'stack_pri_below_pri'))),
-        stack_pri_reset     = slider_float:new(0.5, 15.0, 4.0, get_hash(key(spell_id, 'stack_pri_reset'))),
+        use_stack_pri        = checkbox:new(false, get_hash(key(spell_id, 'use_stack_pri'))),
+        stack_pri_count      = slider_int:new(1, 20, 4,   get_hash(key(spell_id, 'stack_pri_count'))),
+        stack_pri_below_pri  = slider_int:new(1, 10, 1,   get_hash(key(spell_id, 'stack_pri_below_pri'))),
+        stack_pri_reset      = slider_float:new(0.5, 15.0, 4.0, get_hash(key(spell_id, 'stack_pri_reset'))),
+        stack_pri_targeted   = checkbox:new(false, get_hash(key(spell_id, 'stack_pri_targeted'))),
 
         -- Cast method: 0=Normal, 1=Key Press, 2=Force Stand Still + Key
         cast_method     = combo_box:new(default_cast_method, get_hash(key(spell_id, 'cast_method'))),
         evade_key       = combo_box:new(0, get_hash(key(spell_id, 'evade_key'))),  -- index into KEY_PRESS_CODES; default 0 = Space
 
-        -- Evade aim mode (only for Key Press method): 0=no aim, 1=towards enemy, 2=orbwalker direction
+        -- Evade aim mode (only for Key Press method): 0=towards enemy, 1=orbwalker direction
         evade_aim_mode  = combo_box:new(0, get_hash(key(spell_id, 'evade_aim_mode'))),
 
         -- Force Stand Still + Skill slot
@@ -353,6 +354,7 @@ function spell_config.render(spell_id, display_name, equipped_ids, all_known_ids
         e.stack_pri_count:render('Casts before reverting', 'How many times to cast at the override priority before switching back to normal priority', 1)
         e.stack_pri_below_pri:render('Override priority', 'Priority used during the build phase (1 = fires before everything else)', 1)
         e.stack_pri_reset:render('Counter reset window (s)', 'If this spell hasn\'t been cast within this many seconds, the counter resets and the build phase starts again', 1)
+        e.stack_pri_targeted:render('Force targeted cast while building', 'During the build phase use a Normal targeted cast (hits the enemy) regardless of the Cast Method setting above. Useful when the spell must actually land to generate stacks (e.g. Clash for Resolve Stacks), while the loop phase can use Key Press.', 1)
     end
 
     -- ---- Combo Chain ----
@@ -427,10 +429,11 @@ function spell_config.get(spell_id)
         chain_boost     = e.chain_boost:get(),
         chain_duration  = e.chain_duration:get(),
 
-        use_stack_pri       = e.use_stack_pri:get(),
-        stack_pri_count     = e.stack_pri_count:get(),
-        stack_pri_below_pri = e.stack_pri_below_pri:get(),
-        stack_pri_reset     = e.stack_pri_reset:get(),
+        use_stack_pri        = e.use_stack_pri:get(),
+        stack_pri_count      = e.stack_pri_count:get(),
+        stack_pri_below_pri  = e.stack_pri_below_pri:get(),
+        stack_pri_reset      = e.stack_pri_reset:get(),
+        stack_pri_targeted   = e.stack_pri_targeted:get(),
 
         cast_method     = e.cast_method:get(),       -- 0=Normal, 1=Key Press, 2=Force Stand Still + Key
         evade_key       = KEY_PRESS_CODES[(e.evade_key:get() or 0) + 1] or 0x20,   -- actual VK code
@@ -486,10 +489,11 @@ function spell_config.apply(spell_id, cfg)
     _set_element(e.chain_boost,   cfg.chain_boost)
     _set_element(e.chain_duration, cfg.chain_duration)
 
-    _set_element(e.use_stack_pri,       cfg.use_stack_pri)
-    _set_element(e.stack_pri_count,     cfg.stack_pri_count)
-    _set_element(e.stack_pri_below_pri, cfg.stack_pri_below_pri)
-    _set_element(e.stack_pri_reset,     cfg.stack_pri_reset)
+    _set_element(e.use_stack_pri,        cfg.use_stack_pri)
+    _set_element(e.stack_pri_count,      cfg.stack_pri_count)
+    _set_element(e.stack_pri_below_pri,  cfg.stack_pri_below_pri)
+    _set_element(e.stack_pri_reset,      cfg.stack_pri_reset)
+    _set_element(e.stack_pri_targeted,   cfg.stack_pri_targeted)
 
     _set_element(e.cast_method,    cfg.cast_method)
     _set_element(e.evade_aim_mode, cfg.evade_aim_mode)
