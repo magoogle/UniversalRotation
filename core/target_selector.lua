@@ -46,9 +46,8 @@ local function _is_valid_enemy(obj)
     if not obj then return false end
     if _is_dead(obj) then return false end
     if obj.is_enemy and not _truthy(function() return obj:is_enemy() end) then return false end
-    if obj.is_hidden and _truthy(function() return obj:is_hidden() end) then return false end
-    if obj.is_invulnerable and _truthy(function() return obj:is_invulnerable() end) then return false end
-    if obj.is_town_npc and _truthy(function() return obj:is_town_npc() end) then return false end
+    if obj.is_immune and _truthy(function() return obj:is_immune() end) then return false end
+    if obj.is_untargetable and _truthy(function() return obj:is_untargetable() end) then return false end
     return true
 end
 
@@ -57,8 +56,8 @@ local function _enemy_list()
     if type(actors_manager.get_enemy_npcs) == 'function' then
         return _try(actors_manager.get_enemy_npcs) or {}
     end
-    if type(actors_manager.get_enemies) == 'function' then
-        return _try(actors_manager.get_enemies) or {}
+    if type(actors_manager.get_enemy_actors) == 'function' then
+        return _try(actors_manager.get_enemy_actors) or {}
     end
     return {}
 end
