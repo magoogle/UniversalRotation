@@ -2,6 +2,7 @@ local spell_config   = require 'core.spell_config'
 local spell_tracker  = require 'core.spell_tracker'
 local target_selector = require 'core.target_selector'
 local buff_provider   = require 'core.buff_provider'
+local logger          = require 'core.logger'
 
 local rotation_engine = {}
 
@@ -178,28 +179,29 @@ end
 
 local function can_act()
     local lp = get_local_player()
-    if not lp then return false end
-    if lp:is_dead() then return false end
+    if not lp then logger.log('can_act: NO local player'); return false end
+    if lp:is_dead() then logger.log('can_act: player is DEAD'); return false end
 
     -- Don't cast anything in town / safe zones
     local town_ok, in_town = pcall(function()
         return lp:get_attribute(attributes.PLAYER_IN_TOWN_LEVEL_AREA)
     end)
-    if town_ok and in_town and in_town > 0 then return false end
+    if town_ok and in_town and in_town > 0 then logger.log('can_act: IN TOWN'); return false end
 
     local pos = lp:get_position()
     if evade and evade.is_dangerous_position and evade.is_dangerous_position(pos) then
+        logger.log('can_act: dangerous position (evade)')
         return false
     end
 
     local active = lp:get_active_spell_id()
     local blocked = { [186139]=true, [197833]=true, [211568]=true }
-    if active and blocked[active] then return false end
+    if active and blocked[active] then logger.log('can_act: blocked spell active ' .. tostring(active)); return false end
 
     local ok, mount_val = pcall(function()
         return lp:get_attribute(attributes.CURRENT_MOUNT)
     end)
-    if ok and mount_val and mount_val < 0 then return false end
+    if ok and mount_val and mount_val < 0 then logger.log('can_act: mounted'); return false end
 
     return true
 end
@@ -225,40 +227,50 @@ end
 --   0 = towards closest enemy
 --   1 = orbwalker direction (clear/pvp -> toward enemy, flee -> away from enemy)
 local function _get_aim_target(aim_mode, player_pos, scan_range)
+    logger.log(string.format('_get_aim_target: aim_mode=%d scan_range=%s', aim_mode, tostring(scan_range)))
     local nearby = target_selector.get_targets(player_pos, scan_range or 30)
     local enemy = nearby and nearby.closest
-    if not enemy then return nil end
+    if not enemy then logger.log('_get_aim_target: no enemy found'); return nil end
 
     local enemy_pos = nil
     pcall(function() enemy_pos = enemy:get_position() end)
-    if not enemy_pos then return nil end
+    if not enemy_pos then logger.log('_get_aim_target: enemy has no position'); return nil end
+
+    logger.log(string.format('_get_aim_target: enemy found'))
 
     if aim_mode == 1 then
         -- Orbwalker direction: read the mode enum to decide direction
         local orb_mode_val = 0
         pcall(function() orb_mode_val = orbwalker.get_orb_mode() end)
+        logger.log(string.format('_get_aim_target: orbwalker mode=%d', orb_mode_val))
         if orb_mode_val == 4 then
             -- Flee: aim away from the nearest enemy
             local flee_pos = nil
             pcall(function()
                 flee_pos = player_pos:get_extended(enemy_pos, -15.0)
             end)
+            logger.log('_get_aim_target: flee mode, aiming away from enemy')
             return flee_pos or enemy_pos
         end
         -- Clear / PvP / None: aim toward enemy
+        logger.log('_get_aim_target: orbwalker non-flee, aiming toward enemy')
         return enemy_pos
     end
 
     -- Mode 0: towards closest enemy
+    logger.log('_get_aim_target: mode 0, aiming at closest enemy')
     return enemy_pos
 end
 
 -- Key-press cast: press a single key (evade / spacebar style)
 -- aim_mode: 0=towards enemy, 1=orbwalker direction
 local function try_key_cast(spell_id, vk_code, is_virtual, aim_mode, player_pos, scan_range)
+    logger.log(string.format('try_key_cast: spell=%s vk=0x%02X virtual=%s aim=%d',
+        tostring(spell_id), vk_code or 0x20, tostring(is_virtual), aim_mode or 0))
+
     if not is_virtual then
-        if not utility.is_spell_ready(spell_id) then return false end
-        if not utility.is_spell_affordable(spell_id) then return false end
+        if not utility.is_spell_ready(spell_id) then logger.log('try_key_cast: spell not ready'); return false end
+        if not utility.is_spell_affordable(spell_id) then logger.log('try_key_cast: spell not affordable'); return false end
     end
 
     vk_code  = vk_code or 0x20  -- default: spacebar
@@ -269,19 +281,29 @@ local function try_key_cast(spell_id, vk_code, is_virtual, aim_mode, player_pos,
         if aim_pos then
             local sx, sy = _world_to_screen(aim_pos)
             if sx and sy then
+                logger.log(string.format('try_key_cast: moving cursor to screen (%d, %d)', sx, sy))
                 local cur = get_cursor_position()
                 local cur_sx, cur_sy = _world_to_screen(cur)
                 utility.send_mouse_move(sx, sy)
                 utility.send_key_press(vk_code)
                 if cur_sx and cur_sy then
                     utility.send_mouse_move(cur_sx, cur_sy)
+                    logger.log('try_key_cast: cursor restored')
                 end
+                logger.log('try_key_cast: SUCCESS (aimed)')
                 return true
+            else
+                logger.log('try_key_cast: world_to_screen FAILED for aim_pos')
             end
+        else
+            logger.log('try_key_cast: no aim target found')
         end
+    else
+        logger.log('try_key_cast: no player_pos')
     end
 
     -- Fallback if no enemy found or screen conversion failed: press key as-is
+    logger.log('try_key_cast: FALLBACK, pressing key without aim')
     utility.send_key_press(vk_code)
     return true
 end
@@ -393,6 +415,7 @@ end
 function rotation_engine.tick(equipped_ids, settings)
     if not can_act() then return false end
     if get_time_since_inject() < _gcd_until then return false end
+    logger.log('--- tick ---')
 
     local lp         = get_local_player()
     local player_pos = lp:get_position()
@@ -441,38 +464,45 @@ function rotation_engine.tick(equipped_ids, settings)
 
         local is_virtual = entry.is_virtual
 
+        local spell_name = is_virtual and 'Evade' or (entry.name or tostring(spell_id))
+        logger.log(string.format('eval: %s (id=%s pri=%d eff=%d method=%d)',
+            spell_name, tostring(spell_id), cfg.priority, entry.eff_pri, cfg.cast_method or 0))
+
         -- Self-cast and cursor-targeted spells don't need enemies present
         if not cfg.self_cast and (cfg.target_mode or 0) ~= 5 then
             if not targets.is_valid or (targets.enemy_count or 0) <= 0 then
+                logger.log('  SKIP: no enemies nearby')
                 goto next_spell
             end
         end
 
         if not spell_tracker.is_off_cooldown(spell_id, cfg.cooldown, cfg.charges) then
+            logger.log('  SKIP: on cooldown')
             goto next_spell
         end
 
         -- Virtual spells don't have real spell IDs, skip API checks
         if not is_virtual then
-            if not utility.is_spell_ready(spell_id) then goto next_spell end
-            if not utility.is_spell_affordable(spell_id) then goto next_spell end
+            if not utility.is_spell_ready(spell_id) then logger.log('  SKIP: spell not ready'); goto next_spell end
+            if not utility.is_spell_affordable(spell_id) then logger.log('  SKIP: spell not affordable'); goto next_spell end
         end
 
         -- Resource condition check
-        if not _check_resource_condition(cfg) then goto next_spell end
+        if not _check_resource_condition(cfg) then logger.log('  SKIP: resource condition'); goto next_spell end
 
         -- Health condition check
-        if not _check_health_condition(cfg) then goto next_spell end
+        if not _check_health_condition(cfg) then logger.log('  SKIP: health condition'); goto next_spell end
 
         if not cfg.self_cast then
-            if cfg.boss_only and not targets.has_boss then goto next_spell end
+            if cfg.boss_only and not targets.has_boss then logger.log('  SKIP: boss_only, no boss'); goto next_spell end
             if cfg.elite_only and not targets.has_elite
                 and not targets.has_boss and not targets.has_champion
-            then goto next_spell end
+            then logger.log('  SKIP: elite_only, no elite/boss/champ'); goto next_spell end
         end
 
         if cfg.require_buff then
             if not _player_has_buff(cfg.buff_hash, cfg.buff_stacks) then
+                logger.log('  SKIP: required buff not active')
                 goto next_spell
             end
         end
@@ -484,7 +514,10 @@ function rotation_engine.tick(equipped_ids, settings)
         if effective_min > 0 then
             if not (targets.has_boss or targets.has_champion) then
                 local nearby = target_selector.count_near(targets, player_pos, aoe_check)
-                if nearby < effective_min then goto next_spell end
+                if nearby < effective_min then
+                    logger.log(string.format('  SKIP: min_enemies %d, have %d', effective_min, nearby))
+                    goto next_spell
+                end
             end
         end
 
@@ -502,25 +535,33 @@ function rotation_engine.tick(equipped_ids, settings)
                 local sc = _stack_pri_counts[spell_id]
                 local count = sc and sc.count or 0
                 in_build_phase = count < (cfg.stack_pri_count or 4)
+                logger.log(string.format('  dispatch: stack_pri count=%d/%d build_phase=%s',
+                    count, cfg.stack_pri_count or 4, tostring(in_build_phase)))
             end
 
             if in_build_phase then
-                return fallback_fn()  -- Normal targeted cast during stack build
+                logger.log('  dispatch: FORCED normal cast (build phase)')
+                return fallback_fn()
             elseif cast_method == 1 then
+                logger.log('  dispatch: KEY PRESS')
                 return try_key_cast(spell_id, cfg.evade_key, is_virtual, cfg.evade_aim_mode, player_pos, range)
             elseif cast_method == 2 then
+                logger.log('  dispatch: FORCE STAND STILL')
                 return try_force_standstill_cast(spell_id, cfg.force_hold_key, cfg.skill_slot, is_virtual, aim_pos)
             else
+                logger.log('  dispatch: NORMAL cast')
                 return fallback_fn()
             end
         end
 
         -- For self-cast, aim at player position
         if cfg.self_cast then
+            logger.log('  path: SELF CAST')
             local did_cast = dispatch_cast(function()
                 return try_cast(spell_id, nil, player_pos, settings.anim_delay or 0.05, true)
             end, player_pos)
             if did_cast then
+                logger.log(string.format('  CAST SUCCESS: %s (self)', spell_name))
                 spell_tracker.record_cast(spell_id, cfg.charges)
                 _apply_chain(cfg)
                 _record_stack_pri_cast(spell_id, cfg)
@@ -536,10 +577,12 @@ function rotation_engine.tick(equipped_ids, settings)
 
         -- Cursor targeting mode (target_mode == 5): cast at cursor position, no enemy needed
         if (cfg.target_mode or 0) == 5 then
+            logger.log('  path: CURSOR CAST')
             local did_cast = dispatch_cast(function()
                 return try_cursor_cast(spell_id, settings.anim_delay or 0.05)
             end, nil)  -- nil = leave cursor as-is for FSS too
             if did_cast then
+                logger.log(string.format('  CAST SUCCESS: %s (cursor)', spell_name))
                 spell_tracker.record_cast(spell_id, cfg.charges)
                 _apply_chain(cfg)
                 _record_stack_pri_cast(spell_id, cfg)
@@ -559,20 +602,24 @@ function rotation_engine.tick(equipped_ids, settings)
             local target = target_selector.pick_target(targets, cfg, player_pos, spell_range)
 
             if not target then
+                logger.log('  SKIP: no valid target in range')
                 local stype = cfg.spell_type or 0
                 local is_melee = (stype == 1) or (stype == 0 and (spell_range or 0) <= 6.0)
                 if is_melee and targets.closest then
+                    logger.log('  moving towards closest enemy')
                     try_move_towards(targets.closest, player_pos, spell_range)
                 end
                 goto next_spell
             end
 
+            logger.log('  path: TARGETED CAST')
             local target_pos = nil
             pcall(function() target_pos = target:get_position() end)
             local did_cast = dispatch_cast(function()
                 return try_cast(spell_id, target, player_pos, settings.anim_delay or 0.05, false)
             end, target_pos)
             if did_cast then
+                logger.log(string.format('  CAST SUCCESS: %s (targeted)', spell_name))
                 spell_tracker.record_cast(spell_id, cfg.charges)
                 _apply_chain(cfg)
                 _record_stack_pri_cast(spell_id, cfg)

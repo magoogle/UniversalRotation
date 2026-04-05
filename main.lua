@@ -6,6 +6,10 @@ local spell_tracker   = require 'core.spell_tracker'
 local rotation_engine = require 'core.rotation_engine'
 local profile_io      = require 'core.profile_io'
 local buff_provider    = require 'core.buff_provider'
+local logger          = require 'core.logger'
+
+-- Start file logger immediately
+logger.enable()
 
 local equipped_ids  = {}   -- spell IDs currently on bar
 local all_known_ids = {}   -- union of all ever-seen IDs (persists through bar swaps)
