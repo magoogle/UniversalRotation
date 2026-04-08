@@ -18,7 +18,7 @@ local TARGET_MODE_LABELS = { 'Priority', 'Closest', 'Lowest HP', 'Highest HP', '
 local RESOURCE_MODE_LABELS = { 'Below %', 'Above %' }
 local CAST_METHOD_LABELS = { 'Normal', 'Key Press', 'Force Stand Still + Key' }
 local SKILL_SLOT_LABELS = { 'Slot 1', 'Slot 2', 'Slot 3', 'Slot 4', 'Slot 5', 'Slot 6' }
-local EVADE_AIM_LABELS = { 'Towards Next Enemy', 'Orbwalker Direction' }
+local EVADE_AIM_LABELS = { 'No Aim (cursor as-is)', 'Towards Next Enemy', 'Orbwalker Direction' }
 
 -- Key press dropdown: labels shown to user, parallel VK code table
 local KEY_PRESS_LABELS = { 'Space', 'E', 'Q', 'R', 'F', 'G', 'X', 'Z',
@@ -133,7 +133,7 @@ local function get_elements(spell_id)
         cast_method     = combo_box:new(default_cast_method, get_hash(key(spell_id, 'cast_method'))),
         evade_key       = combo_box:new(0, get_hash(key(spell_id, 'evade_key'))),  -- index into KEY_PRESS_CODES; default 0 = Space
 
-        -- Evade aim mode (only for Key Press method): 0=towards enemy, 1=orbwalker direction
+        -- Evade aim mode (only for Key Press method): 0=no aim, 1=towards enemy, 2=orbwalker direction
         evade_aim_mode  = combo_box:new(0, get_hash(key(spell_id, 'evade_aim_mode'))),
 
         -- Force Stand Still + Skill slot

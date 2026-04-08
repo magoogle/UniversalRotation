@@ -210,100 +210,92 @@ end
 -- D4 world uses x/y as horizontal plane; vec2:coordinate_to_screen() does the projection.
 local function _world_to_screen(world_pos)
     if not world_pos then return nil end
-    local result = nil
-    pcall(function()
+    local ok, sx, sy = pcall(function()
         local wx = type(world_pos.x) == 'function' and world_pos:x() or world_pos.x
         local wy = type(world_pos.y) == 'function' and world_pos:y() or world_pos.y
-        local s = vec2:new(wx, wy):coordinate_to_screen()
-        local sx = type(s.x) == 'function' and s:x() or s.x
-        local sy = type(s.y) == 'function' and s:y() or s.y
-        if sx and sy then result = { sx, sy } end
+        local v = vec2:new(wx, wy)
+        local s = v:coordinate_to_screen()
+        return s.x, s.y
     end)
-    if result then return result[1], result[2] end
+    if ok and sx and sy then return sx, sy end
     return nil
 end
 
 -- Get aim target world position based on aim_mode:
---   0 = towards closest enemy
---   1 = orbwalker direction (clear/pvp -> toward enemy, flee -> away from enemy)
+--   0 = no aim (nil)
+--   1 = towards closest enemy
+--   2 = orbwalker direction (clear/pvp → toward enemy, flee → away)
 local function _get_aim_target(aim_mode, player_pos, scan_range)
+    if aim_mode == 0 then logger.log('_get_aim_target: No Aim, skipping'); return nil end
+
     logger.log(string.format('_get_aim_target: aim_mode=%d scan_range=%s', aim_mode, tostring(scan_range)))
-    local nearby = target_selector.get_targets(player_pos, scan_range or 30)
-    local enemy = nearby and nearby.closest
+    local enemy = target_selector.get_target_closer(player_pos, scan_range or 30)
     if not enemy then logger.log('_get_aim_target: no enemy found'); return nil end
 
     local enemy_pos = nil
     pcall(function() enemy_pos = enemy:get_position() end)
     if not enemy_pos then logger.log('_get_aim_target: enemy has no position'); return nil end
 
-    logger.log(string.format('_get_aim_target: enemy found'))
-
     if aim_mode == 1 then
-        -- Orbwalker direction: read the mode enum to decide direction
+        logger.log('_get_aim_target: towards enemy')
+        return enemy_pos, false
+    elseif aim_mode == 2 then
         local orb_mode_val = 0
         pcall(function() orb_mode_val = orbwalker.get_orb_mode() end)
         logger.log(string.format('_get_aim_target: orbwalker mode=%d', orb_mode_val))
         if orb_mode_val == 4 then
-            -- Flee: aim away from the nearest enemy
             local flee_pos = nil
             pcall(function()
-                flee_pos = player_pos:get_extended(enemy_pos, -15.0)
+                flee_pos = enemy_pos:get_extended(player_pos, -15.0)
             end)
-            logger.log('_get_aim_target: flee mode, aiming away from enemy')
-            return flee_pos or enemy_pos
+            logger.log('_get_aim_target: flee, aiming away')
+            return flee_pos or nil, true
+        else
+            logger.log('_get_aim_target: orbwalker non-flee, towards enemy')
+            return enemy_pos, false
         end
-        -- Clear / PvP / None: aim toward enemy
-        logger.log('_get_aim_target: orbwalker non-flee, aiming toward enemy')
-        return enemy_pos
     end
 
-    -- Mode 0: towards closest enemy
-    logger.log('_get_aim_target: mode 0, aiming at closest enemy')
-    return enemy_pos
+    return nil
 end
 
 -- Key-press cast: press a single key (evade / spacebar style)
--- aim_mode: 0=towards enemy, 1=orbwalker direction
+-- aim_mode: 0=no aim, 1=towards enemy, 2=orbwalker direction
 local function try_key_cast(spell_id, vk_code, is_virtual, aim_mode, player_pos, scan_range)
     logger.log(string.format('try_key_cast: spell=%s vk=0x%02X virtual=%s aim=%d',
         tostring(spell_id), vk_code or 0x20, tostring(is_virtual), aim_mode or 0))
 
     if not is_virtual then
-        if not utility.is_spell_ready(spell_id) then logger.log('try_key_cast: spell not ready'); return false end
-        if not utility.is_spell_affordable(spell_id) then logger.log('try_key_cast: spell not affordable'); return false end
+        if not utility.is_spell_ready(spell_id) then logger.log('try_key_cast: not ready'); return false end
+        if not utility.is_spell_affordable(spell_id) then logger.log('try_key_cast: not affordable'); return false end
     end
 
-    vk_code  = vk_code or 0x20  -- default: spacebar
-    aim_mode = aim_mode or 0
+    vk_code   = vk_code or 0x20
+    aim_mode  = aim_mode or 0
 
-    if player_pos then
+    if aim_mode ~= 0 and player_pos then
         local aim_pos = _get_aim_target(aim_mode, player_pos, scan_range)
         if aim_pos then
             local sx, sy = _world_to_screen(aim_pos)
             if sx and sy then
-                logger.log(string.format('try_key_cast: moving cursor to screen (%d, %d)', sx, sy))
+                logger.log(string.format('try_key_cast: cursor -> (%d, %d)', sx, sy))
                 local cur = get_cursor_position()
                 local cur_sx, cur_sy = _world_to_screen(cur)
                 utility.send_mouse_move(sx, sy)
                 utility.send_key_press(vk_code)
                 if cur_sx and cur_sy then
                     utility.send_mouse_move(cur_sx, cur_sy)
-                    logger.log('try_key_cast: cursor restored')
                 end
                 logger.log('try_key_cast: SUCCESS (aimed)')
                 return true
             else
-                logger.log('try_key_cast: world_to_screen FAILED for aim_pos')
+                logger.log('try_key_cast: world_to_screen failed')
             end
-        else
-            logger.log('try_key_cast: no aim target found')
         end
-    else
-        logger.log('try_key_cast: no player_pos')
     end
 
-    -- Fallback if no enemy found or screen conversion failed: press key as-is
-    logger.log('try_key_cast: FALLBACK, pressing key without aim')
+    -- Fallback: just press the key with no cursor adjustment
+    logger.log('try_key_cast: pressing key (no aim)')
     utility.send_key_press(vk_code)
     return true
 end
@@ -415,7 +407,6 @@ end
 function rotation_engine.tick(equipped_ids, settings)
     if not can_act() then return false end
     if get_time_since_inject() < _gcd_until then return false end
-    logger.log('--- tick ---')
 
     local lp         = get_local_player()
     local player_pos = lp:get_position()
