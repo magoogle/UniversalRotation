@@ -72,6 +72,16 @@ local function update_settings()
     settings.overlay_y       = gui.elements.overlay_y:get()
     settings.overlay_show_buffs = gui.elements.overlay_show_buffs and gui.elements.overlay_show_buffs:get() or false
     rotation_engine.set_scan_range(settings.scan_range)
+
+    -- Sync buff dropdown filters to buff_provider
+    buff_provider.set_filter('paragon',  gui.elements.bf_paragon  and gui.elements.bf_paragon:get()  or false)
+    buff_provider.set_filter('talent',   gui.elements.bf_talent   and gui.elements.bf_talent:get()   or false)
+    buff_provider.set_filter('item',     gui.elements.bf_item     and gui.elements.bf_item:get()     or false)
+    buff_provider.set_filter('npc',      gui.elements.bf_npc      and gui.elements.bf_npc:get()      or false)
+    buff_provider.set_filter('bsk',      gui.elements.bf_bsk      and gui.elements.bf_bsk:get()      or false)
+    buff_provider.set_filter('dungeon',  gui.elements.bf_dungeon  and gui.elements.bf_dungeon:get()  or false)
+    buff_provider.set_filter('passive',  gui.elements.bf_passive  and gui.elements.bf_passive:get()  or false)
+    buff_provider.set_filter('internal', gui.elements.bf_internal and gui.elements.bf_internal:get() or false)
 end
 
 local function _pretty_spell_name(raw)

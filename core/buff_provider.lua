@@ -4,14 +4,22 @@ local buff_provider = {}
 -- Keyed by hash: { [hash] = raw_name_string }
 local _buff_history = {}
 
--- Spell-name remap table: maps known internal buff name fragments to friendly names.
--- Built from spell ID reference. Buff names from the API often match spell names
--- (e.g. "Barbarian_Rallying_Cry", "Necro_Bone_Storm").
--- We strip the class prefix and pretty-print, but this table catches special cases.
-local _name_overrides = {
-    -- Add manual overrides here if a buff name doesn't match any spell pattern.
-    -- e.g. ["Some_Weird_Internal_Name"] = "Friendly Name",
+-- Category filter: which categories are visible in dropdowns
+-- "skill" is always shown; others default to hidden
+local _category_filters = {
+    skill    = true,
+    paragon  = false,
+    talent   = false,
+    item     = false,
+    npc      = false,
+    bsk      = false,
+    dungeon  = false,
+    passive  = false,
+    internal = false,
 }
+
+-- Spell-name remap table
+local _name_overrides = {}
 
 local function safe_call(fn, ...)
     local ok, v = pcall(fn, ...)
@@ -19,22 +27,64 @@ local function safe_call(fn, ...)
     return v
 end
 
+-- Classify a raw buff name into a category
+function buff_provider.categorize(raw_name)
+    if not raw_name or raw_name == '' then return 'internal' end
+    local s = tostring(raw_name)
+
+    -- Hash-only / numeric-only → internal
+    if s:match('^Buff #%d+$') or s:match('^%d+$') then return 'internal' end
+    if #s <= 2 then return 'internal' end
+
+    local lower = s:lower()
+
+    -- BSK / Infernal Horde
+    if lower:match('^bsk') or lower:match('_bsk') then return 'bsk' end
+
+    -- Dungeon affixes
+    if lower:match('^dungeon') or lower:match('^affix') or lower:match('dungeon_affix') then return 'dungeon' end
+
+    -- Paragon
+    if lower:match('^paragon') or lower:match('_paragon') then return 'paragon' end
+
+    -- Talent
+    if lower:match('^talent') or lower:match('_talent') then return 'talent' end
+
+    -- NPC / Actor
+    if lower:match('^npc') or lower:match('^actor') or lower:match('_npc_') or lower:match('_actor_') then return 'npc' end
+
+    -- Item / gear slots
+    if lower:match('^item_') or lower:match('^item%-') then return 'item' end
+    local gear_keywords = { 'amulet', 'helm', 'chest', 'gloves', 'boots', 'pants', 'ring', 'weapon',
+                            'offhand', 'shield', 'armor', 'belt', 'bracer', 'shoulder', 'leg_' }
+    for _, kw in ipairs(gear_keywords) do
+        if lower:match(kw) then return 'item' end
+    end
+
+    -- Passives
+    if lower:match('^passive') or lower:match('_passive') then return 'passive' end
+
+    -- Internal/engine patterns
+    if lower:match('^generic') or lower:match('^world_') or lower:match('^global_')
+        or lower:match('^power_') or lower:match('^trait_') then
+        return 'internal'
+    end
+
+    -- Everything else is a skill/ability buff
+    return 'skill'
+end
+
 -- Pretty-print a raw buff name: strip class prefix, replace underscores, title case
 local function pretty_name(raw)
     if not raw or raw == '' then return raw end
-
-    -- Check overrides first (exact match on raw name)
     if _name_overrides[raw] then return _name_overrides[raw] end
 
     local s = tostring(raw)
-    -- Strip brackets
     s = s:gsub('[%[%]]', ''):gsub('^%s+', ''):gsub('%s+$', '')
 
-    -- Split on underscores
     local parts = {}
     for p in s:gmatch('[^_]+') do parts[#parts + 1] = p end
 
-    -- Known class prefixes to strip (first segment only)
     local class_prefixes = {
         Barbarian = true, Barb = true,
         Druid = true,
@@ -50,7 +100,6 @@ local function pretty_name(raw)
         table.remove(parts, 1)
     end
 
-    -- Title case each part
     for i, p in ipairs(parts) do
         parts[i] = p:sub(1, 1):upper() .. p:sub(2):lower()
     end
@@ -61,10 +110,10 @@ end
 -- Extract hash and raw name from a buff object
 local function read_buff(b)
     local h = nil
-    if type(b.get_name_hash) == 'function' then
-        h = safe_call(b.get_name_hash, b)
-    elseif type(b.name_hash) == 'number' then
+    if type(b.name_hash) == 'number' then
         h = b.name_hash
+    elseif type(b.get_name_hash) == 'function' then
+        h = safe_call(b.get_name_hash, b)
     end
     if type(h) ~= 'number' or h == 0 then return nil, nil end
 
@@ -81,25 +130,34 @@ local function read_buff(b)
     return h, n
 end
 
--- Record a buff into the persistent history
+-- Record a buff into the persistent history (stores everything, filtering is at display time)
 local function remember_buff(hash, raw_name)
     if not hash or hash == 0 then return end
     _buff_history[hash] = raw_name or _buff_history[hash] or ('Buff #' .. tostring(hash))
 end
 
--- Get the set of currently active buff hashes (for tagging inactive ones)
-local function get_active_hash_set()
-    local active = {}
-    local player = get_local_player and get_local_player()
-    if not player or type(player.get_buffs) ~= 'function' then return active end
-
-    local buffs = safe_call(player.get_buffs, player) or {}
-    for _, b in ipairs(buffs) do
-        local h = read_buff(b)
-        if h then active[h] = true end
-    end
-    return active
+-- Check if a buff's category is currently visible
+local function is_visible(raw_name)
+    local cat = buff_provider.categorize(raw_name)
+    return _category_filters[cat] or false
 end
+
+-- ---- Filter control (called from gui) ----
+function buff_provider.set_filter(category, enabled)
+    if _category_filters[category] ~= nil then
+        _category_filters[category] = enabled
+    end
+end
+
+function buff_provider.get_filter(category)
+    return _category_filters[category] or false
+end
+
+function buff_provider.get_all_filters()
+    return _category_filters
+end
+
+-- ---- Dropdown builders ----
 
 function buff_provider.get_player_buff_choices()
     local items  = { 'None' }
@@ -108,10 +166,11 @@ function buff_provider.get_player_buff_choices()
 
     local player = get_local_player and get_local_player()
     if not player or type(player.get_buffs) ~= 'function' then
-        -- Still include history even if player isn't available
         local tmp = {}
         for h, raw in pairs(_buff_history) do
-            tmp[#tmp + 1] = { name = raw, hash = h, active = false }
+            if is_visible(raw) then
+                tmp[#tmp + 1] = { name = raw, hash = h, active = false }
+            end
         end
         table.sort(tmp, function(a, b) return a.name < b.name end)
         for i, it in ipairs(tmp) do
@@ -126,42 +185,40 @@ function buff_provider.get_player_buff_choices()
     -- Read current buffs and update history
     local buffs = safe_call(player.get_buffs, player) or {}
     local active_set = {}
-    local seen_hashes = {}
 
     for _, b in ipairs(buffs) do
         local h, n = read_buff(b)
         if h then
             remember_buff(h, n)
             active_set[h] = true
-            seen_hashes[h] = true
         end
     end
 
-    -- Build combined list: active buffs first, then inactive from history
+    -- Build combined list filtered by visible categories
     local active_list = {}
     local inactive_list = {}
 
     for h, raw in pairs(_buff_history) do
-        if active_set[h] then
-            active_list[#active_list + 1] = { name = raw, hash = h, active = true }
-        else
-            inactive_list[#inactive_list + 1] = { name = raw, hash = h, active = false }
+        if is_visible(raw) then
+            if active_set[h] then
+                active_list[#active_list + 1] = { name = raw, hash = h, active = true }
+            else
+                inactive_list[#inactive_list + 1] = { name = raw, hash = h, active = false }
+            end
         end
     end
 
     table.sort(active_list, function(a, b) return a.name < b.name end)
     table.sort(inactive_list, function(a, b) return a.name < b.name end)
 
-    -- Active buffs first
-    for i, it in ipairs(active_list) do
+    for _, it in ipairs(active_list) do
         local label = pretty_name(it.name)
         items[#items + 1] = label
         hashes[#hashes + 1] = it.hash
-        index_by_hash[it.hash] = #items - 1 -- 0-based combo index
+        index_by_hash[it.hash] = #items - 1
     end
 
-    -- Then inactive (previously seen) buffs
-    for i, it in ipairs(inactive_list) do
+    for _, it in ipairs(inactive_list) do
         local label = pretty_name(it.name) .. ' (Not Active)'
         items[#items + 1] = label
         hashes[#hashes + 1] = it.hash
@@ -171,7 +228,6 @@ function buff_provider.get_player_buff_choices()
     return items, hashes, index_by_hash
 end
 
-
 function buff_provider.get_available_buffs_and_missing(saved_hash, saved_name)
     local items, hashes, index_by_hash = buff_provider.get_player_buff_choices()
 
@@ -180,19 +236,20 @@ function buff_provider.get_available_buffs_and_missing(saved_hash, saved_name)
         return items, hashes
     end
 
-    -- If the saved buff is already in our list (active or from history), we're good
+    -- If the saved buff is already in our list, we're good
     if index_by_hash and index_by_hash[saved_hash] ~= nil then
         return items, hashes
     end
 
-    -- Buff was never seen in this session — add it from saved name
-    -- Also remember it in history so it persists
+    -- Buff not in the visible list — add it regardless of filter so the user's selection isn't lost
     local raw_name = tostring(saved_name or '')
     if raw_name == '' then raw_name = 'Buff #' .. tostring(saved_hash) end
 
     remember_buff(saved_hash, raw_name)
 
-    local label = pretty_name(raw_name) .. ' (Not Active)'
+    local cat = buff_provider.categorize(raw_name)
+    local tag = is_visible(raw_name) and ' (Not Active)' or (' (Not Active) [' .. cat .. ']')
+    local label = pretty_name(raw_name) .. tag
 
     table.insert(items, 2, label)
     table.insert(hashes, 2, saved_hash)
@@ -212,10 +269,10 @@ function buff_provider.get_active_buffs()
             remember_buff(h, n)
 
             local stacks = nil
-            if type(b.get_stacks) == 'function' then
-                stacks = safe_call(b.get_stacks, b)
-            elseif type(b.stacks) == 'number' then
+            if type(b.stacks) == 'number' then
                 stacks = b.stacks
+            elseif type(b.get_stacks) == 'function' then
+                stacks = safe_call(b.get_stacks, b)
             end
             stacks = tonumber(stacks) or 0
 
@@ -233,7 +290,7 @@ function buff_provider.get_active_buffs()
     return out
 end
 
--- Import buff history from a profile (called during profile load)
+-- Import buff history from a profile (stores all, filtering at display)
 function buff_provider.import_history(history_table)
     if type(history_table) ~= 'table' then return end
     for hash_str, raw_name in pairs(history_table) do

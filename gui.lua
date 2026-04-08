@@ -72,6 +72,17 @@ gui.elements = {
     equipped_tree  = tree_node:new(1),
     inactive_tree  = tree_node:new(1),
     evade_tree     = tree_node:new(1),
+
+    -- Buff filter checkboxes (controls which categories appear in buff dropdowns)
+    buff_filter_tree    = tree_node:new(2),
+    bf_paragon          = cb(false, 'bf_paragon'),
+    bf_talent           = cb(false, 'bf_talent'),
+    bf_item             = cb(false, 'bf_item'),
+    bf_npc              = cb(false, 'bf_npc'),
+    bf_bsk              = cb(false, 'bf_bsk'),
+    bf_dungeon          = cb(false, 'bf_dungeon'),
+    bf_passive          = cb(false, 'bf_passive'),
+    bf_internal         = cb(false, 'bf_internal'),
 }
 
 gui.render = function(spell_config, equipped_ids, all_known_ids, profile_names, active_profile)
@@ -108,6 +119,21 @@ gui.render = function(spell_config, equipped_ids, all_known_ids, profile_names, 
 
         gui.elements.export_profile:render('Export class profile', 'Write current settings to a JSON file for sharing')
         gui.elements.import_profile:render('Import class profile', 'Load settings from the class JSON file (overwrites current)')
+
+        -- Buff dropdown filters
+        if gui.elements.buff_filter_tree:push('Buff Dropdown Filters') then
+            render_menu_header('Skill buffs are always shown. Toggle extra categories below.')
+            gui.elements.bf_paragon:render('Show Paragon',         'Include paragon board buffs')
+            gui.elements.bf_talent:render('Show Talent',           'Include talent tree buffs')
+            gui.elements.bf_item:render('Show Item / Gear',        'Include gear slot and item affix buffs')
+            gui.elements.bf_npc:render('Show NPC / Actor',         'Include NPC and actor buffs')
+            gui.elements.bf_bsk:render('Show BSK / Horde',         'Include Infernal Horde (BSK) buffs')
+            gui.elements.bf_dungeon:render('Show Dungeon Affix',   'Include dungeon affix buffs')
+            gui.elements.bf_passive:render('Show Passives',        'Include passive effect buffs')
+            gui.elements.bf_internal:render('Show Internal/Other', 'Include unnamed, hash-only, and engine-internal buffs')
+            gui.elements.buff_filter_tree:pop()
+        end
+
         gui.elements.global_tree:pop()
     end
 
