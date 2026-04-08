@@ -397,7 +397,7 @@ function spell_config.render(spell_id, display_name, equipped_ids, all_known_ids
                 sps.last_list_sig = sig
             end
 
-            e.stack_pri_buff_combo:render('Buff to Monitor', items, 'Select the buff whose stacks determine the build phase (e.g. Resolve Stacks from Clash)')
+            e.stack_pri_buff_combo:render('Buff to Monitor', items, 'Select the buff whose stacks determine the build phase')
 
             local sel = e.stack_pri_buff_combo:get()
             if type(sel) ~= 'number' then sel = 0 end
@@ -409,14 +409,14 @@ function spell_config.render(spell_id, display_name, equipped_ids, all_known_ids
                 sps.buff_name = label
             end
 
-            e.stack_pri_count:render('Target Stack Count', 'Build phase is active while buff stacks are BELOW this value. Set to your max Resolve Stacks (gear dependent, up to 15).', 1)
+            e.stack_pri_count:render('Target Stack Count', 'Build phase is active while buff stacks are BELOW this value. Set to your desired max stacks (gear dependent).', 1)
         else
             -- Cast-counter based
             e.stack_pri_count:render('Casts before reverting', 'How many times to cast at the override priority before switching back to normal priority', 1)
             e.stack_pri_reset:render('Counter reset window (s)', 'If this spell hasn\'t been cast within this many seconds, the counter resets and the build phase starts again', 1)
         end
         e.stack_pri_below_pri:render('Override priority', 'Priority used during the build phase (1 = fires before everything else)', 1)
-        e.stack_pri_targeted:render('Force targeted cast while building', 'During the build phase use a Normal targeted cast (hits the enemy) regardless of the Cast Method setting above. Useful when the spell must actually land to generate stacks.', 1)
+        e.stack_pri_targeted:render('Force targeted cast while building', 'During the build phase use a Normal targeted cast (hits the enemy) regardless of the Cast Method setting above. Useful when the spell must land on a target to generate stacks.', 1)
     end
 
     -- ---- Combo Chain ----
