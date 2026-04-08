@@ -138,22 +138,69 @@ end
 -- Cast counters for Stack Priority Mode: [spell_id] = { count, last_cast }
 local _stack_pri_counts = {}
 
+-- Read current stack count for a buff by name_hash from the player's buff list
+local function _get_buff_stacks(buff_hash)
+    if not buff_hash or buff_hash == 0 then return 0 end
+    local player = get_local_player()
+    if not player or type(player.get_buffs) ~= 'function' then return 0 end
+    local buffs = player:get_buffs()
+    if type(buffs) ~= 'table' then return 0 end
+    for _, b in ipairs(buffs) do
+        if b then
+            local h = nil
+            if type(b.name_hash) == 'number' then
+                h = b.name_hash
+            elseif type(b.get_name_hash) == 'function' then
+                h = b:get_name_hash()
+            end
+            if h == buff_hash then
+                if type(b.stacks) == 'number' then return b.stacks end
+                if type(b.get_stacks) == 'function' then return b:get_stacks() end
+                return 0
+            end
+        end
+    end
+    return 0
+end
+
+-- Check if the spell is in its "build phase" for Stack Priority Mode.
+-- Returns true when stacks/casts are below the target.
+local function _is_in_build_phase(spell_id, cfg)
+    if not cfg or not cfg.use_stack_pri then return false end
+    local target = cfg.stack_pri_count or 4
+
+    if cfg.stack_pri_use_buff and (cfg.stack_pri_buff_hash or 0) ~= 0 then
+        -- Buff-based: read real stacks
+        local stacks = _get_buff_stacks(cfg.stack_pri_buff_hash)
+        return stacks < target
+    else
+        -- Cast-counter based
+        local now = get_time_since_inject()
+        local sc = _stack_pri_counts[spell_id]
+        if sc and sc.last_cast > 0 and (now - sc.last_cast) > (cfg.stack_pri_reset or 4.0) then
+            sc.count = 0
+        end
+        local count = sc and sc.count or 0
+        return count < target
+    end
+end
+
 -- Get the effective priority of a spell (chain boosts + stack-based priority override)
 -- cfg is optional; if present, stack priority mode is evaluated
 local function _effective_priority(spell_id, base_priority, cfg)
     local now = get_time_since_inject()
     local result = base_priority
 
-    -- Stack Priority Mode: cast at override priority for the first N casts,
-    -- then revert to normal. Counter resets after the configured idle window.
+    -- Stack Priority Mode: use override priority during build phase
     if cfg and cfg.use_stack_pri then
-        local sc = _stack_pri_counts[spell_id]
-        if sc and sc.last_cast > 0 and (now - sc.last_cast) > (cfg.stack_pri_reset or 4.0) then
-            sc.count = 0  -- reset: spell hasn't fired recently, start build phase again
-        end
-        local count = sc and sc.count or 0
-        if count < (cfg.stack_pri_count or 4) then
+        local building = _is_in_build_phase(spell_id, cfg)
+        if building then
             result = cfg.stack_pri_below_pri or base_priority
+            if cfg.stack_pri_use_buff and (cfg.stack_pri_buff_hash or 0) ~= 0 then
+                local stacks = _get_buff_stacks(cfg.stack_pri_buff_hash)
+                logger.log(string.format('stack_pri: spell=%s stacks=%d/%d BUILD PHASE (buff)',
+                    tostring(spell_id), stacks, cfg.stack_pri_count or 4))
+            end
         end
     end
 
@@ -521,15 +568,7 @@ function rotation_engine.tick(equipped_ids, settings)
         -- When stack_pri_targeted is enabled and the spell is still in its build phase,
         -- always use the normal targeted cast regardless of configured cast_method.
         local function dispatch_cast(fallback_fn, aim_pos)
-            local in_build_phase = false
-            if cfg.use_stack_pri and cfg.stack_pri_targeted then
-                local sc = _stack_pri_counts[spell_id]
-                local count = sc and sc.count or 0
-                in_build_phase = count < (cfg.stack_pri_count or 4)
-                logger.log(string.format('  dispatch: stack_pri count=%d/%d build_phase=%s',
-                    count, cfg.stack_pri_count or 4, tostring(in_build_phase)))
-            end
-
+            local in_build_phase = cfg.stack_pri_targeted and _is_in_build_phase(spell_id, cfg)
             if in_build_phase then
                 logger.log('  dispatch: FORCED normal cast (build phase)')
                 return fallback_fn()

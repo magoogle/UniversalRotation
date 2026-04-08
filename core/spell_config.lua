@@ -51,6 +51,25 @@ local function _get_buff_state(spell_id)
     return st
 end
 
+-- Stack Priority buff state: separate from require_buff so they can track different buffs
+local _stack_pri_buff_state = {}
+
+local function _get_stack_pri_buff_state(spell_id)
+    local k = tostring(spell_id)
+    local st = _stack_pri_buff_state[k]
+    if st then return st end
+    st = { buff_hash = 0, buff_name = '', last_list_sig = nil }
+    _stack_pri_buff_state[k] = st
+    return st
+end
+
+local function _ensure_stack_pri_buff_combo(e, spell_id)
+    if e.stack_pri_buff_combo then return end
+    local st = _get_stack_pri_buff_state(spell_id)
+    local default_idx = (type(st.buff_hash) == 'number' and st.buff_hash ~= 0) and 1 or 0
+    e.stack_pri_buff_combo = combo_box:new(default_idx, get_hash(key(spell_id, 'stack_pri_buff_combo')))
+end
+
 local function _get_chain_state(spell_id)
     local k = tostring(spell_id)
     local cs = _chain_state[k]
@@ -122,8 +141,10 @@ local function get_elements(spell_id)
         health_mode     = combo_box:new(0, get_hash(key(spell_id, 'health_mode'))),  -- default: Below %
         health_pct      = slider_int:new(1, 100, 50, get_hash(key(spell_id, 'health_pct'))),
 
-        -- Stack Priority Mode: cast at override priority for N casts, then revert to normal
+        -- Stack Priority Mode: cast at override priority until condition met, then revert
         use_stack_pri        = checkbox:new(false, get_hash(key(spell_id, 'use_stack_pri'))),
+        stack_pri_use_buff   = checkbox:new(false, get_hash(key(spell_id, 'stack_pri_use_buff'))),
+        stack_pri_buff_combo = nil,  -- built lazily
         stack_pri_count      = slider_int:new(1, 20, 4,   get_hash(key(spell_id, 'stack_pri_count'))),
         stack_pri_below_pri  = slider_int:new(1, 10, 1,   get_hash(key(spell_id, 'stack_pri_below_pri'))),
         stack_pri_reset      = slider_float:new(0.5, 15.0, 4.0, get_hash(key(spell_id, 'stack_pri_reset'))),
@@ -349,12 +370,53 @@ function spell_config.render(spell_id, display_name, equipped_ids, all_known_ids
     end
 
     -- ---- Stack Priority Mode ----
-    e.use_stack_pri:render('Stack Priority Mode', 'Cast this spell at override priority for N casts, then revert to normal priority. Counter resets if the spell hasn\'t fired within the reset window (e.g. cast Clash 4x to build stacks, then fall back to normal rotation).')
+    e.use_stack_pri:render('Stack Priority Mode', 'Override this spell\'s priority during a build phase. Build phase ends when a buff reaches target stacks OR after N casts.')
     if e.use_stack_pri:get() then
-        e.stack_pri_count:render('Casts before reverting', 'How many times to cast at the override priority before switching back to normal priority', 1)
+        e.stack_pri_use_buff:render('Monitor Buff Stacks', 'Use a real buff\'s stack count to control the build phase instead of counting casts. Enable this for abilities like Clash that build Resolve Stacks.')
+        if e.stack_pri_use_buff:get() then
+            -- Buff-based: show buff picker and target stacks slider
+            local sps = _get_stack_pri_buff_state(spell_id)
+            _ensure_stack_pri_buff_combo(e, spell_id)
+
+            local stored_hash = sps.buff_hash or 0
+            local stored_name = sps.buff_name or ''
+            local items, hashes = buff_provider.get_available_buffs_and_missing(stored_hash, stored_name)
+
+            local desired_idx = 0
+            if stored_hash ~= 0 then
+                for i = 1, #hashes do
+                    if hashes[i] == stored_hash then desired_idx = i - 1; break end
+                end
+            end
+
+            local sig = tostring(desired_idx) .. '|' .. _hash_list_sig(hashes)
+            if sps.last_list_sig ~= sig then
+                if type(e.stack_pri_buff_combo.set) == 'function' then
+                    pcall(e.stack_pri_buff_combo.set, e.stack_pri_buff_combo, desired_idx)
+                end
+                sps.last_list_sig = sig
+            end
+
+            e.stack_pri_buff_combo:render('Buff to Monitor', items, 'Select the buff whose stacks determine the build phase (e.g. Resolve Stacks from Clash)')
+
+            local sel = e.stack_pri_buff_combo:get()
+            if type(sel) ~= 'number' then sel = 0 end
+            local sel_hash = hashes[sel + 1] or 0
+            sps.buff_hash = sel_hash
+            if sel_hash ~= 0 then
+                local label = tostring(items[sel + 1] or '')
+                    :gsub('%s*%(Not Active%)%s*$', ''):gsub('%s*%(missing%)%s*$', '')
+                sps.buff_name = label
+            end
+
+            e.stack_pri_count:render('Target Stack Count', 'Build phase is active while buff stacks are BELOW this value. Set to your max Resolve Stacks (gear dependent, up to 15).', 1)
+        else
+            -- Cast-counter based
+            e.stack_pri_count:render('Casts before reverting', 'How many times to cast at the override priority before switching back to normal priority', 1)
+            e.stack_pri_reset:render('Counter reset window (s)', 'If this spell hasn\'t been cast within this many seconds, the counter resets and the build phase starts again', 1)
+        end
         e.stack_pri_below_pri:render('Override priority', 'Priority used during the build phase (1 = fires before everything else)', 1)
-        e.stack_pri_reset:render('Counter reset window (s)', 'If this spell hasn\'t been cast within this many seconds, the counter resets and the build phase starts again', 1)
-        e.stack_pri_targeted:render('Force targeted cast while building', 'During the build phase use a Normal targeted cast (hits the enemy) regardless of the Cast Method setting above. Useful when the spell must actually land to generate stacks (e.g. Clash for Resolve Stacks), while the loop phase can use Key Press.', 1)
+        e.stack_pri_targeted:render('Force targeted cast while building', 'During the build phase use a Normal targeted cast (hits the enemy) regardless of the Cast Method setting above. Useful when the spell must actually land to generate stacks.', 1)
     end
 
     -- ---- Combo Chain ----
@@ -430,6 +492,9 @@ function spell_config.get(spell_id)
         chain_duration  = e.chain_duration:get(),
 
         use_stack_pri        = e.use_stack_pri:get(),
+        stack_pri_use_buff   = e.stack_pri_use_buff:get(),
+        stack_pri_buff_hash  = _get_stack_pri_buff_state(spell_id).buff_hash or 0,
+        stack_pri_buff_name  = _get_stack_pri_buff_state(spell_id).buff_name or '',
         stack_pri_count      = e.stack_pri_count:get(),
         stack_pri_below_pri  = e.stack_pri_below_pri:get(),
         stack_pri_reset      = e.stack_pri_reset:get(),
@@ -490,10 +555,18 @@ function spell_config.apply(spell_id, cfg)
     _set_element(e.chain_duration, cfg.chain_duration)
 
     _set_element(e.use_stack_pri,        cfg.use_stack_pri)
+    _set_element(e.stack_pri_use_buff,   cfg.stack_pri_use_buff)
     _set_element(e.stack_pri_count,      cfg.stack_pri_count)
     _set_element(e.stack_pri_below_pri,  cfg.stack_pri_below_pri)
     _set_element(e.stack_pri_reset,      cfg.stack_pri_reset)
     _set_element(e.stack_pri_targeted,   cfg.stack_pri_targeted)
+    do
+        local sps = _get_stack_pri_buff_state(spell_id)
+        if type(cfg.stack_pri_buff_hash) == 'number' then sps.buff_hash = cfg.stack_pri_buff_hash end
+        if type(cfg.stack_pri_buff_name) == 'string' then sps.buff_name = cfg.stack_pri_buff_name end
+        sps.last_list_sig = nil
+        e.stack_pri_buff_combo = nil
+    end
 
     _set_element(e.cast_method,    cfg.cast_method)
     _set_element(e.evade_aim_mode, cfg.evade_aim_mode)
